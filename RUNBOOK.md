@@ -46,10 +46,14 @@ in the commands below.
 ## 1. Create the AVD from scratch (idempotent)
 
 ```bash
+: "${SYSTEM_IMAGE:?run 'source bin/env.sh' first — it loads versions.txt}"   # fail loud if env not sourced
 avdmanager delete avd -n pixel-a37 2>/dev/null || true          # start from nothing
 echo "no" | avdmanager create avd -n pixel-a37 -k "$SYSTEM_IMAGE" -d pixel
 avdmanager list avd | grep -A2 'Name: pixel-a37'                # confirm
 ```
+
+> If you see `Error: Package path is not valid` here, `$SYSTEM_IMAGE` is empty — you skipped
+> `source bin/env.sh` (step 0). The guard line above turns that into a clear message instead.
 
 - `-d pixel` = Pixel hardware profile. `echo "no"` declines the "custom hardware profile?"
   prompt. `Auto-selecting single ABI arm64-v8a` in the output is expected.
