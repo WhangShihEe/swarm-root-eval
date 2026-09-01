@@ -37,9 +37,14 @@ rootable — avoid it).
 > should prefer the newest `cmdline-tools` and `doctor` should reject `target=android-0`. Step 1
 > below uses the 23.0 binary explicitly until that lands.
 >
-> The successful *boot itself* of a corrected AVD is still to be confirmed in a real terminal
-> (I hit RAM limits and every boot I tried used the broken api-0 AVD). If a corrected cold boot
-> still shows `hvf is not enabled`, then and only then is it a host issue (try a Mac reboot).
+> **Confirmed (2026-09-01):** a corrected AVD (23.0 tools, `target=android-37.1`) cold-boots
+> cleanly in a real terminal — `Boot completed in 13077 ms`, no `hvf is not enabled`. So the
+> only failure mode is the api-0 AVD; a correctly-created AVD boots fine.
+>
+> One operational footgun seen while confirming: launching a second `emulator … -port 5554`
+> without killing the first leaves the loser on **undiscoverable random ports** (adb only scans
+> 5554–5584), so it looks "stuck." **Always kill the prior instance before relaunching**, and
+> keep the explicit `-port`.
 
 ---
 
@@ -166,19 +171,17 @@ adb -s emulator-5554 emu kill        # or: adb emu kill
 
 ## Verification status (recon, 2026-09-01)
 
-The from-scratch **boot** was not driven to completion here: every attempt used a broken
-`target=android-0` AVD (cmdline-tools 12.0 — see the ⚠️ box), and I hit RAM limits. Whether a
-*corrected* AVD cold-boots cleanly is the one thing left to confirm in a real terminal.
-Everything else was verified live against the API-37 rootable image (the running `frida16k`
-instance, same image) and against the SDK on this host:
+The full path was verified live on a genuine from-scratch cold boot (2026-09-01), once the AVD
+was created with the 23.0 tools. The only step not run here is the `/system` write-test, which
+needs a separate `-writable-system` launch (see the verdict below):
 
 | Step | Command | Status |
 |------|---------|--------|
 | 1 | `avdmanager create … -d pixel` | ⚠️ tool-sensitive — 23.0 tools give `target=android-37.1` (verified); 12.0 give `target=android-0` (broken). Fixed in step 1. |
-| 2 | cold boot + readiness poll | ⏸️ **run in your terminal** — with a corrected AVD; boot itself unconfirmed here |
-| 3 | `adb root` / `id` | ✅ live — `restarting adbd as root`, `uid=0` |
-| 4 | frida-server + `frida-ps -U` | ✅ live — client 17.17.0 pinned; `frida-ps -U` listed device processes |
-| 5 | aapt derivation + install | ✅ derivation live (`sg.gov.hpb.healthhub` / `LauncherActivity`); package present in `pm list packages` |
+| 2 | cold boot + readiness | ✅ live — corrected AVD, `Boot completed in 13077 ms`, `boot_completed=1`, `bootanim=stopped`, pm responsive |
+| 3 | `adb root` / `id` | ✅ live — `restarting adbd as root`, `uid=0(root) … context=…:su` |
+| 4 | frida-server + `frida-ps -U` | ✅ live — pushed 53 MB, running as root (pid 4619); client 17.17.0; `frida-ps -U` listed device processes |
+| 5 | aapt derivation + `install-multiple` | ✅ live — derived `sg.gov.hpb.healthhub` / `LauncherActivity`; split install → `Success`; package present in `pm list packages` |
 | 6 | confirm frida + package | ✅ live |
 
 ---
