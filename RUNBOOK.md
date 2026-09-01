@@ -19,16 +19,27 @@ Apple Silicon M4 Max, macOS 26.5, SDK at `~/Library/Android/sdk`. Pinned tool ve
 `system-images;android-37.1;google_apis_ps16k;arm64-v8a` (the playstore variant is **not**
 rootable — avoid it).
 
-> ⚠️ **Run the emulator from a real terminal, not from inside an agent/CI harness.** The
-> Android emulator needs Hypervisor.framework (HVF). Launched from within the Claude Code tool
-> harness the guest never executes — the log shows repeated
-> `qemu_mprotect__osdep: mprotect failed: Permission denied` and then
-> `WARNING | hvf is not enabled on this aarch64 host`, and qemu sits at ~0 s CPU forever. The
-> emulator binary *is* correctly entitled (`com.apple.security.cs.allow-jit`,
-> `com.apple.security.hypervisor`) and `emulator -accel-check` reports HVF available — the
-> block is the harness process context denying the JIT/hypervisor memory mapping, not the SDK.
-> **Steps 1–6 below are the exact working commands; run them in your own shell (or Android
-> Studio's terminal).**
+> ⚠️ **GOTCHA (root-caused 2026-09-01): use the right `cmdline-tools` or the AVD boots to a
+> black screen.** A from-scratch cold boot of an AVD created by **cmdline-tools 12.0** stalls:
+> `WARNING | hvf is not enabled on this aarch64 host`, then repeated
+> `qemu_mprotect__osdep: mprotect failed: Permission denied`, qemu at ~0 s CPU. The cause is
+> **not** HVF, the host, or the agent harness — it's a **broken AVD config**: cmdline-tools
+> 12.0 can't parse this image's SDK-XML **v4** `package.xml` (the `unexpected element abis …
+> Expected api-level` warnings), so `avdmanager create` writes **`target=android-0`** into
+> `config.ini` instead of `android-37.1`. That api-0 AVD can't boot (black screen), which is
+> exactly what Android Studio's Device Manager showed ("API 0") until the API level was set by
+> hand.
+>
+> **Fix (verified — the created `config.ini` then reads `target=android-37.1` and
+> `tag.ids=google_apis,page_size_16kb`):** create the AVD with **cmdline-tools 23.0**, which is
+> already installed here at `cmdline-tools/latest-2` (12.0 is at `latest`, and that's what
+> `env.sh` currently puts on PATH). This is really an **issue-01/03 fix** — `env.sh`/`doctor`
+> should prefer the newest `cmdline-tools` and `doctor` should reject `target=android-0`. Step 1
+> below uses the 23.0 binary explicitly until that lands.
+>
+> The successful *boot itself* of a corrected AVD is still to be confirmed in a real terminal
+> (I hit RAM limits and every boot I tried used the broken api-0 AVD). If a corrected cold boot
+> still shows `hvf is not enabled`, then and only then is it a host issue (try a Mac reboot).
 
 ---
 
@@ -47,17 +58,23 @@ in the commands below.
 
 ```bash
 : "${SYSTEM_IMAGE:?run 'source bin/env.sh' first — it loads versions.txt}"   # fail loud if env not sourced
-avdmanager delete avd -n pixel-a37 2>/dev/null || true          # start from nothing
-echo "no" | avdmanager create avd -n pixel-a37 -k "$SYSTEM_IMAGE" -d pixel
-avdmanager list avd | grep -A2 'Name: pixel-a37'                # confirm
+# Use cmdline-tools 23.0 (NOT the 12.0 on PATH): 12.0 mis-parses the v4 image XML and
+# writes target=android-0 -> black screen. See the GOTCHA box above.
+AVDM="$ANDROID_SDK_ROOT/cmdline-tools/latest-2/bin/avdmanager"
+"$AVDM" delete avd -n pixel-a37 2>/dev/null || true             # start from nothing
+echo "no" | "$AVDM" create avd -n pixel-a37 -k "$SYSTEM_IMAGE" -d pixel
+grep -E '^target=|^tag.ids=' ~/.android/avd/pixel-a37.avd/config.ini   # MUST show target=android-37.1
 ```
 
 > If you see `Error: Package path is not valid` here, `$SYSTEM_IMAGE` is empty — you skipped
 > `source bin/env.sh` (step 0). The guard line above turns that into a clear message instead.
+> If `target=` comes out `android-0`, you used the 12.0 `avdmanager` — recreate with the 23.0
+> one as above (or patch `config.ini`).
 
 - `-d pixel` = Pixel hardware profile. `echo "no"` declines the "custom hardware profile?"
   prompt. `Auto-selecting single ABI arm64-v8a` in the output is expected.
-- AVD lands in `~/.android/avd/pixel-a37.avd`.
+- AVD lands in `~/.android/avd/pixel-a37.avd`. The `target=android-37.1` check is the guard
+  against the api-0 black-screen boot.
 
 ## 2. Cold boot from nothing (headless), on an explicit port
 
@@ -149,15 +166,16 @@ adb -s emulator-5554 emu kill        # or: adb emu kill
 
 ## Verification status (recon, 2026-09-01)
 
-The from-scratch **boot** could not be driven to completion from inside the agent harness (HVF
-blocked — see the ⚠️ box). Everything that does **not** require the agent to run an HVF guest
-was verified live against the API-37 rootable image (the user's running `frida16k` instance,
-same image family) and against the SDK on this host:
+The from-scratch **boot** was not driven to completion here: every attempt used a broken
+`target=android-0` AVD (cmdline-tools 12.0 — see the ⚠️ box), and I hit RAM limits. Whether a
+*corrected* AVD cold-boots cleanly is the one thing left to confirm in a real terminal.
+Everything else was verified live against the API-37 rootable image (the running `frida16k`
+instance, same image) and against the SDK on this host:
 
 | Step | Command | Status |
 |------|---------|--------|
-| 1 | `avdmanager create avd … -d pixel` | ✅ ran — `pixel-a37` created (then deleted to leave a clean slate) |
-| 2 | cold boot + readiness poll | ⏸️ **run in your terminal** — HVF unavailable to the harness |
+| 1 | `avdmanager create … -d pixel` | ⚠️ tool-sensitive — 23.0 tools give `target=android-37.1` (verified); 12.0 give `target=android-0` (broken). Fixed in step 1. |
+| 2 | cold boot + readiness poll | ⏸️ **run in your terminal** — with a corrected AVD; boot itself unconfirmed here |
 | 3 | `adb root` / `id` | ✅ live — `restarting adbd as root`, `uid=0` |
 | 4 | frida-server + `frida-ps -U` | ✅ live — client 17.17.0 pinned; `frida-ps -U` listed device processes |
 | 5 | aapt derivation + install | ✅ derivation live (`sg.gov.hpb.healthhub` / `LauncherActivity`); package present in `pm list packages` |
@@ -201,11 +219,11 @@ adb -s emulator-5554 remount            # /system now mounted rw
 adb -s emulator-5554 shell 'echo probe > /system/harness_probe.txt && cat /system/harness_probe.txt && rm /system/harness_probe.txt'
 ```
 
-> ⏸️ The live write/read-back/delete on `/system` was **not** executed during this recon — the
-> from-scratch boot it depends on can't run under the agent harness (HVF). Run the block above
-> in a real terminal to stamp the final ✅/❌ on this image. The evidence
-> (`userdebug` + `veritymode=enforcing`) makes the `-writable-system` + `disable-verity` +
-> reboot recipe the expected requirement; confirm and record the exact result here.
+> ⏸️ The live write/read-back/delete on `/system` was **not** executed during this recon — it
+> depends on a booted (corrected) AVD, and the cold boot was blocked by the api-0 AVD bug plus
+> RAM limits. Run the block above in a real terminal to stamp the final ✅/❌ on this image. The
+> evidence (`userdebug` + `veritymode=enforcing`) makes the `-writable-system` + `disable-verity`
+> + reboot recipe the expected requirement; confirm and record the exact result here.
 
 **Frida-only sidestep (recommended for the demo tier).** The anti-root / root-detection tasks
 do **not** need a writable `/system` at all. A **root shell + frida-server** (steps 3–4, no
