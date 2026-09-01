@@ -1,0 +1,15 @@
+# Pinned toolchain for the emulator harness.
+# Values are the SDK package revisions actually installed & verified on this host
+# (Apple Silicon M4 Max, arm64). `bin/doctor` asserts the live toolchain matches.
+
+# Android SDK
+SDK_PLATFORM_API=37.1
+SYSTEM_IMAGE="system-images;android-37.1;google_apis_ps16k;arm64-v8a"
+SYSTEM_IMAGE_REVISION=9          # rootable google_apis image; the playstore variant is NOT rootable
+EMULATOR_REVISION=37.1.11
+PLATFORM_TOOLS_REVISION=37.0.1   # provides adb
+CMDLINE_TOOLS_REVISION=12.0      # provides sdkmanager + avdmanager; needs JDK >= 17
+
+# Frida — client (host) and frida-server (device) MUST be the same version
+FRIDA_VERSION=17.17.0
+FRIDA_SERVER_ARCH=android-arm64

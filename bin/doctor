@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# doctor — assert this host can build the emulator harness.
+# Checks every tool pinned in versions.txt plus the rootable system image.
+# Exit 0 = ready; non-zero = at least one problem, each printed with a → fix hint.
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./env.sh
+. "$HERE/env.sh"
+# shellcheck source=./_lib.sh
+. "$HERE/_lib.sh"
+
+printf 'harness doctor — SDK %s\n\n' "$ANDROID_SDK_ROOT"
+
+# 1. JDK for cmdline-tools (>= 17). env.sh resolves JAVA_HOME; verify the result.
+#    Guard on an executable java first, else the exec error would land in $jver.
+jver=
+if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+  jver=$("$JAVA_HOME/bin/java" -version 2>&1 | head -1 | sed -E 's/.*version "([0-9]+).*/\1/')
+fi
+if [ "${jver:-0}" -ge 17 ] 2>/dev/null; then
+  pass java "$jver  ($JAVA_HOME)"
+else
+  fail java "need JDK >= 17 for cmdline-tools, found ${jver:-none}" \
+       "install a JDK 17+ (e.g. Android Studio's bundled JBR); env.sh will pick it up"
+fi
+
+# 2-4. SDK tools: resolve from the pinned SDK and match the package revision.
+check_sdk_tool emulator   emulator   emulator             "$EMULATOR_REVISION" \
+  "install the emulator via Android Studio -> SDK Manager (or: sdkmanager emulator)"
+check_sdk_tool adb        adb        platform-tools       "$PLATFORM_TOOLS_REVISION" \
+  'sdkmanager "platform-tools"'
+check_sdk_tool sdkmanager sdkmanager cmdline-tools/latest "$CMDLINE_TOOLS_REVISION" \
+  "install 'Android SDK Command-line Tools' via Android Studio -> SDK Manager"
+
+# 5. avdmanager — ships with cmdline-tools (rev already covered by check 4). It has no
+#    --version, so running it is the JDK-compat canary: a too-old JDK raises
+#    UnsupportedClassVersionError and this exits non-zero.
+if p=$(command -v avdmanager 2>/dev/null); then
+  case "$p" in
+    "$ANDROID_SDK_ROOT"/*)
+      if avdmanager list target >/dev/null 2>&1; then
+        pass avdmanager "runs under JDK ${jver:-?}  ($p)"
+      else
+        fail avdmanager "present but failed to run" \
+             "usually a JDK mismatch — cmdline-tools need JDK 17+ (JAVA_HOME=${JAVA_HOME:-unset})"
+      fi ;;
+    *) fail avdmanager "resolves to $p, not the pinned SDK" \
+            "ensure $ANDROID_SDK_ROOT tools precede it on PATH (source bin/env.sh)" ;;
+  esac
+else
+  fail avdmanager "not on PATH" \
+       "install 'Android SDK Command-line Tools' via Android Studio -> SDK Manager"
+fi
+
+# 6. frida client — must match the frida-server we push to the device. Not an SDK tool
+#    (pip/pipx install), so it lives outside ANDROID_SDK_ROOT; check version only.
+if p=$(command -v frida 2>/dev/null); then
+  fv=$(frida --version 2>/dev/null)
+  if [ "$fv" = "$FRIDA_VERSION" ]; then
+    pass frida "$fv  ($p)"
+  else
+    fail frida "client '$fv', expected $FRIDA_VERSION" \
+         "install frida-tools pinned so 'frida --version' == $FRIDA_VERSION (server must match)"
+  fi
+else
+  fail frida "not found" "pip install frida-tools to get frida $FRIDA_VERSION"
+fi
+
+# 7. rootable system image — present and at the pinned revision.
+img_path="${SYSTEM_IMAGE//;//}"
+if img_rev=$(sdk_pkg_rev "$img_path"); then
+  if [ "$img_rev" = "$SYSTEM_IMAGE_REVISION" ]; then
+    pass system-image "$SYSTEM_IMAGE (rev $img_rev)"
+  else
+    fail system-image "rev '$img_rev', expected $SYSTEM_IMAGE_REVISION" \
+         "sdkmanager \"$SYSTEM_IMAGE\"  # (re)install the pinned revision"
+  fi
+else
+  fail system-image "rootable image not installed" "sdkmanager \"$SYSTEM_IMAGE\""
+fi
+
+summary
