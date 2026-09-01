@@ -171,9 +171,8 @@ adb -s emulator-5554 emu kill        # or: adb emu kill
 
 ## Verification status (recon, 2026-09-01)
 
-The full path was verified live on a genuine from-scratch cold boot (2026-09-01), once the AVD
-was created with the 23.0 tools. The only step not run here is the `/system` write-test, which
-needs a separate `-writable-system` launch (see the verdict below):
+The full path — **including the writable-`/system` write-test** — was verified live on genuine
+from-scratch cold boots (2026-09-01), once the AVD was created with the 23.0 tools:
 
 | Step | Command | Status |
 |------|---------|--------|
@@ -183,6 +182,7 @@ needs a separate `-writable-system` launch (see the verdict below):
 | 4 | frida-server + `frida-ps -U` | ✅ live — pushed 53 MB, running as root (pid 4619); client 17.17.0; `frida-ps -U` listed device processes |
 | 5 | aapt derivation + `install-multiple` | ✅ live — derived `sg.gov.hpb.healthhub` / `LauncherActivity`; split install → `Success`; package present in `pm list packages` |
 | 6 | confirm frida + package | ✅ live |
+| — | writable-`/system` (`-writable-system` boot) | ✅ live — disable-verity + reboot + remount → `/system` RW (overlayfs); write/read-back/delete succeeded |
 
 ---
 
@@ -222,11 +222,16 @@ adb -s emulator-5554 remount            # /system now mounted rw
 adb -s emulator-5554 shell 'echo probe > /system/harness_probe.txt && cat /system/harness_probe.txt && rm /system/harness_probe.txt'
 ```
 
-> ⏸️ The live write/read-back/delete on `/system` was **not** executed during this recon — it
-> depends on a booted (corrected) AVD, and the cold boot was blocked by the api-0 AVD bug plus
-> RAM limits. Run the block above in a real terminal to stamp the final ✅/❌ on this image. The
-> evidence (`userdebug` + `veritymode=enforcing`) makes the `-writable-system` + `disable-verity`
-> + reboot recipe the expected requirement; confirm and record the exact result here.
+> ✅ **PROVEN (2026-09-01) — writable `/system` works on this image.** Ran the block above on a
+> `-writable-system` boot: `adb disable-verity` → `Successfully disabled verity` (enables
+> overlayfs; the "could not map scratch image / fallback to free space on super" lines are
+> benign) → reboot → `adb remount` → `Remounted /system as RW … Remount succeeded`. `/system`
+> then shows as an **overlay** mount (`rw`, `upperdir=/mnt/scratch/overlay/system/upper`), and
+> the throwaway write → read-back (`harness-probe-…`) → delete all succeeded. Note it's
+> **overlayfs**, not a raw block edit: changes live in the scratch upperdir and persist across
+> reboots while verity stays disabled — fine for build.prop overlay, a system CA cert, or a
+> system `su`. (`getprop ro.boot.veritymode` still prints `enforcing` — that's the static boot
+> flag; the effective state is the successful RW remount.)
 
 **Frida-only sidestep (recommended for the demo tier).** The anti-root / root-detection tasks
 do **not** need a writable `/system` at all. A **root shell + frida-server** (steps 3–4, no
