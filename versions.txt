@@ -8,7 +8,17 @@ SYSTEM_IMAGE="system-images;android-37.1;google_apis_ps16k;arm64-v8a"
 SYSTEM_IMAGE_REVISION=9          # rootable google_apis image; the playstore variant is NOT rootable
 EMULATOR_REVISION=37.1.11
 PLATFORM_TOOLS_REVISION=37.0.1   # provides adb
-CMDLINE_TOOLS_REVISION=12.0      # provides sdkmanager + avdmanager; needs JDK >= 17
+
+# cmdline-tools (sdkmanager + avdmanager); needs JDK >= 17.
+# Treated by doctor as a MINIMUM floor, not an exact pin: the revision must be new
+# enough to parse the image's SDK-XML v4. 12.0 silently writes target=android-0 into
+# the AVD config -> black-screen boot (see RUNBOOK / ticket 02). 23.0 ships as the
+# 'latest-2' cmdline-tools package; env.sh prefers the newest installed revision.
+CMDLINE_TOOLS_MIN_REVISION=23.0
+
+# yq — the harness's YAML dependency (mikefarah yq, v4 API). Ambient dev tool, not an
+# SDK package; pinned here as a floor so it is not assumed. Install: brew install yq.
+YQ_VERSION=4.44.3
 
 # Frida — client (host) and frida-server (device) MUST be the same version
 FRIDA_VERSION=17.17.0

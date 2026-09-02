@@ -25,13 +25,15 @@ else
        "install a JDK 17+ (e.g. Android Studio's bundled JBR); env.sh will pick it up"
 fi
 
-# 2-4. SDK tools: resolve from the pinned SDK and match the package revision.
+# 2-3. SDK tools pinned to an exact revision: resolve from the pinned SDK and match.
 check_sdk_tool emulator   emulator   emulator             "$EMULATOR_REVISION" \
   "install the emulator via Android Studio -> SDK Manager (or: sdkmanager emulator)"
 check_sdk_tool adb        adb        platform-tools       "$PLATFORM_TOOLS_REVISION" \
   'sdkmanager "platform-tools"'
-check_sdk_tool sdkmanager sdkmanager cmdline-tools/latest "$CMDLINE_TOOLS_REVISION" \
-  "install 'Android SDK Command-line Tools' via Android Studio -> SDK Manager"
+
+# 4. cmdline-tools (sdkmanager) — floor check. Fails loudly below CMDLINE_TOOLS_REVISION
+#    because a too-old revision (12.0) writes target=android-0 AVDs -> black-screen boot.
+check_cmdline_tools "$CMDLINE_TOOLS_MIN_REVISION"
 
 # 5. avdmanager — ships with cmdline-tools (rev already covered by check 4). It has no
 #    --version, so running it is the JDK-compat canary: a too-old JDK raises
@@ -53,7 +55,10 @@ else
        "install 'Android SDK Command-line Tools' via Android Studio -> SDK Manager"
 fi
 
-# 6. frida client — must match the frida-server we push to the device. Not an SDK tool
+# 6. yq — the harness's YAML dependency (mikefarah yq, v4). Floor-checked; see _lib.sh.
+check_yq "$YQ_VERSION"
+
+# 7. frida client — must match the frida-server we push to the device. Not an SDK tool
 #    (pip/pipx install), so it lives outside ANDROID_SDK_ROOT; check version only.
 if p=$(command -v frida 2>/dev/null); then
   fv=$(frida --version 2>/dev/null)
@@ -67,7 +72,7 @@ else
   fail frida "not found" "pip install frida-tools to get frida $FRIDA_VERSION"
 fi
 
-# 7. rootable system image — present and at the pinned revision.
+# 8. rootable system image — present and at the pinned revision.
 img_path="${SYSTEM_IMAGE//;//}"
 if img_rev=$(sdk_pkg_rev "$img_path"); then
   if [ "$img_rev" = "$SYSTEM_IMAGE_REVISION" ]; then
