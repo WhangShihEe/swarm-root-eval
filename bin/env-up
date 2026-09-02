@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# env-up — boot a bare emulator from a device-spec YAML to full readiness.
+# env-up — boot an emulator from a device-spec YAML and (ticket 04) provision it to t=0.
 #
 # Reads a validated device-spec (bin/_spec.sh), creates the AVD if needed (idempotent),
 # cold-boots it from scratch on an explicit port, and returns only once the device is
 # genuinely usable. Prints the adb serial `emulator-<console_port>` on stdout (and nothing
 # else there, so callers can capture it); all progress goes to stderr.
 #
-# No provisioning here (no root/frida/APK) — that is ticket 04. Teardown is bin/env-down.
+# If a target APK is resolved (--target-apk / TARGET_APK=<path> / the env var / the spec's
+# target_apk) and the spec's `provision` toggle is not false, the booted device is then
+# provisioned (root shell, frida-server, APK installed, settings normalized — bin/_provision.sh)
+# and verified before the serial is printed. With no target APK it bare-boots (ticket 03).
+# Teardown is bin/env-down.
 #
-#   bin/env-up --spec devices/pixel-a37.yaml [--port 5554]
+#   bin/env-up --spec devices/pixel-a37.yaml [--port 5554] [--target-apk <apk|dir>]
+#   TARGET_APK=<apk> bin/env-up --spec devices/pixel-a37.yaml
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,13 +23,17 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/_spec.sh"
 # shellcheck source=./_device.sh
 . "$HERE/_device.sh"
+# shellcheck source=./_provision.sh
+. "$HERE/_provision.sh"
 
 log() { printf 'env-up: %s\n' "$*" >&2; }
 die() { printf 'env-up: %s\n' "$*" >&2; exit 1; }
 
-usage() { echo "usage: env-up --spec <device-spec.yaml> [--port <console_port>]" >&2; }
+usage() { echo "usage: env-up --spec <device-spec.yaml> [--port <console_port>] [--target-apk <apk|dir>]" >&2; }
 
-SPEC= PORT=5554
+# TARGET_APK env var seeds the target; a --target-apk flag or a TARGET_APK=<path> token
+# overrides it, and the spec's target_apk is the fallback (resolved after spec_load).
+SPEC= PORT=5554 TARGET_APK_ARG=${TARGET_APK:-}
 BOOT_TIMEOUT=${ENV_UP_BOOT_TIMEOUT:-420}   # cold boot + wipe-data can take minutes
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -32,6 +41,9 @@ while [ $# -gt 0 ]; do
     --spec=*) SPEC=${1#--spec=}; shift ;;
     --port) PORT=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
     --port=*) PORT=${1#--port=}; shift ;;
+    --target-apk) TARGET_APK_ARG=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+    --target-apk=*) TARGET_APK_ARG=${1#--target-apk=} ; shift ;;
+    TARGET_APK=*) TARGET_APK_ARG=${1#TARGET_APK=} ; shift ;;   # literal ticket syntax
     -h|--help) usage; exit 0 ;;
     *) log "unknown argument: $1"; usage; exit 2 ;;
   esac
@@ -123,6 +135,49 @@ case "$wait_rc" in
   *) die "device $SERIAL did not reach a ready state within ${BOOT_TIMEOUT}s — see $LOG" ;;
 esac
 log "device ready: $SERIAL"
+
+# --- provision to t=0 (ticket 04) --------------------------------------------------------
+# Resolve the target APK: an explicit --target-apk / TARGET_APK arg wins over the spec's
+# target_apk. Path normalization (~/ expansion, relative→CWD→repo-root) is shared with
+# bin/verify via apk_resolve_path so the two never disagree about a spec's target_apk.
+TARGET_APK="$TARGET_APK_ARG"
+[ -n "$TARGET_APK" ] || TARGET_APK="${SPEC_TARGET_APK:-}"
+[ -n "$TARGET_APK" ] && TARGET_APK="$(apk_resolve_path "$TARGET_APK")"
+
+if [ -z "$TARGET_APK" ]; then
+  log "no target APK (--target-apk / TARGET_APK / spec target_apk) — bare boot, skipping provisioning"
+elif [ "${SPEC_PROVISION:-true}" = false ]; then
+  log "spec provision=false — bare boot, skipping provisioning (target APK '$TARGET_APK' not installed)"
+else
+  [ -e "$TARGET_APK" ] || die "target APK not found: $TARGET_APK"
+  command -v frida-ps >/dev/null 2>&1 || die "frida-ps not on PATH — the provisioning verify needs the frida client (pip install frida-tools; see bin/doctor)"
+
+  PKG="$(apk_package "$TARGET_APK")" || die "could not derive package from $TARGET_APK (is aapt on PATH? source bin/env.sh)"
+  [ -n "$PKG" ] || die "derived an empty package name from $TARGET_APK — is it a valid APK?"
+  ACT="$(apk_launch_activity "$TARGET_APK")"
+  if apk_is_split "$TARGET_APK"; then KIND="split set"; else KIND="single apk"; fi
+  log "provisioning $SERIAL for $PKG (launch: ${ACT:-<none>}) from $KIND"
+
+  log "  root shell…";      prov_root "$SERIAL"    || die "provisioning failed: no root shell"
+  if [ "${SPEC_FRIDA:-true}" = false ]; then
+    log "  frida: skipped (spec frida=false)"
+  else
+    log "  frida-server…";  prov_frida "$SERIAL"   || die "provisioning failed: frida-server not reachable"
+  fi
+  log "  install APK…";     prov_install "$SERIAL" "$TARGET_APK" || die "provisioning failed: APK install"
+  if [ "${SPEC_NORMALIZE_SETTINGS:-true}" = false ]; then
+    log "  settings: skipped (spec normalize_settings=false)"
+  else
+    log "  normalize settings…"; prov_settings "$SERIAL" || die "provisioning failed: animation scales not zeroed"
+  fi
+
+  # Prove t=0 the same way bin/verify does (reachable + frida up + package present).
+  if [ "${SPEC_FRIDA:-true}" != false ]; then
+    verify_frida "$SERIAL" || die "post-provision check failed: frida client cannot reach $SERIAL"
+  fi
+  verify_package "$SERIAL" "$PKG" || die "post-provision check failed: $PKG not in pm list packages"
+  log "provisioned + verified: $SERIAL ($PKG)"
+fi
 
 # The one line on stdout: the serial, for callers to capture.
 printf '%s\n' "$SERIAL"

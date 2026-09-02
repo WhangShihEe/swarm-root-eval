@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# verify — prove a device is provisioned to t=0.
+#
+# Exits 0 iff the device is reachable (booted), frida-server is up (the host frida client
+# reaches it), and the target package is installed. Exits non-zero with a single clear
+# reason otherwise. The target package is taken from --package, or derived from an APK
+# (--target-apk), or from the spec's target_apk (--spec). Serial defaults to the console
+# port (--port, default 5554) or --serial.
+#
+#   bin/verify --serial emulator-5554 --package sg.gov.hpb.healthhub
+#   bin/verify --spec devices/pixel-a37.yaml --target-apk ~/apks/healthhub
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./env.sh
+. "$HERE/env.sh"
+# shellcheck source=./_spec.sh
+. "$HERE/_spec.sh"
+# shellcheck source=./_device.sh
+. "$HERE/_device.sh"
+# shellcheck source=./_provision.sh
+. "$HERE/_provision.sh"
+
+if [ -t 1 ]; then _G=$'\033[32m'; _R=$'\033[31m'; _Z=$'\033[0m'; else _G=; _R=; _Z=; fi
+pass() { printf '  %s✓%s %s\n' "$_G" "$_Z" "$1" >&2; }
+fail() { printf '  %s✗%s %s\n' "$_R" "$_Z" "$1" >&2; [ -n "${2:-}" ] && printf '     → %s\n' "$2" >&2; exit 1; }
+log()  { printf 'verify: %s\n' "$*" >&2; }
+usage(){ echo "usage: verify [--serial <s> | --port <p>] (--package <pkg> | --target-apk <apk|dir> | --spec <yaml>)" >&2; }
+
+SERIAL= PORT=5554 PKG= TARGET_APK= SPEC=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --serial) SERIAL=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+    --serial=*) SERIAL=${1#--serial=}; shift ;;
+    --port) PORT=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+    --port=*) PORT=${1#--port=}; shift ;;
+    --package) PKG=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+    --package=*) PKG=${1#--package=}; shift ;;
+    --target-apk) TARGET_APK=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+    --target-apk=*) TARGET_APK=${1#--target-apk=}; shift ;;
+    --spec) SPEC=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+    --spec=*) SPEC=${1#--spec=}; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) log "unknown argument: $1"; usage; exit 2 ;;
+  esac
+done
+
+[ -n "$SERIAL" ] || SERIAL="emulator-$PORT"
+
+# Resolve the package to look for: --package wins; else derive from --target-apk; else the
+# spec's target_apk (which may need the same ~/ expansion env-up does).
+if [ -z "$PKG" ]; then
+  if [ -z "$TARGET_APK" ] && [ -n "$SPEC" ]; then
+    spec_load "$SPEC" >/dev/null 2>&1 || true   # only need target_apk; don't hard-fail on image
+    TARGET_APK="${SPEC_TARGET_APK:-}"
+  fi
+  [ -n "$TARGET_APK" ] || { usage; fail "no package to check" "pass --package <pkg>, or --target-apk/--spec to derive it"; }
+  TARGET_APK="$(apk_resolve_path "$TARGET_APK")"   # shared with env-up: same rules both ways
+  [ -e "$TARGET_APK" ] || fail "target APK not found: $TARGET_APK"
+  PKG="$(apk_package "$TARGET_APK")" || fail "could not derive package from $TARGET_APK" "is aapt on PATH? source bin/env.sh"
+  [ -n "$PKG" ] || fail "derived an empty package from $TARGET_APK"
+fi
+
+command -v adb >/dev/null 2>&1 || fail "adb not on PATH" "source bin/env.sh"
+
+log "checking $SERIAL for package $PKG"
+
+# 1. reachable + genuinely booted
+emu_present "$SERIAL" || fail "$SERIAL is not in 'adb devices'" "boot it: bin/env-up --spec <yaml>"
+emu_booted  "$SERIAL" || fail "$SERIAL is present but not fully booted (boot_completed/bootanim/pm)"
+pass "device reachable and booted ($SERIAL)"
+
+# 2. frida up
+command -v frida-ps >/dev/null 2>&1 || fail "frida-ps not on PATH" "install the frida client (pip install frida-tools)"
+verify_frida "$SERIAL" || fail "frida-server not reachable on $SERIAL" "re-provision: bin/env-up … --target-apk <apk> (pushes+starts frida-server)"
+pass "frida-server up (frida-ps -D $SERIAL lists processes)"
+
+# 3. package installed
+verify_package "$SERIAL" "$PKG" || fail "$PKG is not installed on $SERIAL" "install it: provision with --target-apk"
+pass "package present: $PKG"
+
+printf '%sverify: OK%s — %s is provisioned (%s)\n' "$_G" "$_Z" "$SERIAL" "$PKG" >&2
+exit 0

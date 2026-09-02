@@ -73,5 +73,28 @@ spec_load() {
     echo "      install it: sdkmanager \"$SPEC_SYSTEM_IMAGE\"" >&2
     return 3
   fi
+
+  # Optional ticket-04 provisioning fields (absent in a bare ticket-03 spec, so they must
+  # never be required). target_apk names the APK to install; the toggles gate provisioning
+  # steps. All default on; an explicit value in the spec wins, and env-up may override
+  # target_apk from --target-apk / TARGET_APK.
+  SPEC_TARGET_APK=$(spec_get "$f" target_apk)
+  SPEC_PROVISION=$(spec_bool "$f" provision true)
+  SPEC_FRIDA=$(spec_bool "$f" frida true)
+  SPEC_NORMALIZE_SETTINGS=$(spec_bool "$f" normalize_settings true)
   return 0
+}
+
+# spec_bool FILE KEY DEFAULT — echo "true"/"false" for a boolean-ish scalar. A missing/null
+# or unrecognized value yields DEFAULT, so a bare spec keeps the documented defaults.
+# Reads the key directly (NOT via spec_get): yq's `//` alternative operator treats a real
+# boolean `false` as empty, which would silently turn an explicit `provision: false` into
+# the default. `yq '.key'` returns true/false/null verbatim.
+spec_bool() {
+  local v; v=$(yq ".${2}" "$1" 2>/dev/null | tr '[:upper:]' '[:lower:]')
+  case "$v" in
+    true|1|yes|on)  echo true ;;
+    false|0|no|off) echo false ;;
+    *)              echo "$3" ;;
+  esac
 }

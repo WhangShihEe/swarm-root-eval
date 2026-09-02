@@ -15,3 +15,15 @@ api: "37.1"                     # env-up asserts config.ini target == android-37
 ram_mb: 4096                    # hw.ramSize
 cores: 4                        # hw.cpu.ncore
 data_size_mb: 8192              # disk.dataPartition.size (formatted on -wipe-data cold boot)
+
+# --- ticket 04: provisioning (all optional) ----------------------------------------------
+# With no target_apk (and no --target-apk / TARGET_APK on the env-up command) the device
+# bare-boots exactly as in ticket 03. Set target_apk here, or pass it at launch, to have
+# env-up provision to t=0 (root shell + frida-server + APK install + normalized settings)
+# and verify before it prints the serial. The APK-in interface: a lone .apk installs with
+# `install -r`; a base.apk beside split_config.*.apk installs with `install-multiple -r`.
+#
+# target_apk: "~/Downloads/for_cyber_stuffs/healthhub/base.apk"   # apk file, or its dir
+# provision: true            # master switch; false -> bare boot even with a target_apk
+# frida: true                # push + start the pinned frida-server (versions.txt)
+# normalize_settings: true   # zero the three animation scales
