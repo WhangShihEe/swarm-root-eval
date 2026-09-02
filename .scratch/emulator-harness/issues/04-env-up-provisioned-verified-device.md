@@ -64,3 +64,17 @@ Notes:
   >1 emulator; APK-path resolution was extracted to a single `apk_resolve_path` shared by
   `env-up` and `bin/verify` (they had diverged); `prov_install` computes the install set
   once.
+
+**Follow-up (2026-09-02) — per-app specs + in-project APK corpus.** Added an untracked
+`apks/` corpus (gitignored) and moved the DBS + HealthHub APK sets into it; added one
+device-spec per app (`devices/dbs.yaml`, `devices/healthhub.yaml`, `devices/rootbeer.yaml`),
+each pinning `target_apk` at a repo-relative path in the corpus so `bin/env-up --spec …`
+boots+provisions that app with no CLI apk arg. The **RootBeer sample** APK
+(`com.scottyab.rootbeer.sample.debug`) was **built from source** (scottyab/rootbeer `:app`
+debug; the sample isn't on F-Droid/GitHub releases) and dropped at `apks/rootbeer/rootbeer.apk`
+— so criterion #6's named target is now **proven live**: `bin/env-up --spec devices/rootbeer.yaml`
+→ single `install -r`, root + frida (`-D`-scoped) + scales=0, `bin/verify` → OK. Three arbitrary
+APKs (RootBeer single, dbs single, HealthHub split), both install shapes, zero code change.
+(Build required JDK 21 + NDK 27 + platform-34/build-tools-35; the host is behind a Cloudflare
+Gateway TLS-intercepting proxy, so the Gradle JVM was pointed at a local truststore carrying
+the Gateway CA.)

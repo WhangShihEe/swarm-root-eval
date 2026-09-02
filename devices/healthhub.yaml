@@ -1,0 +1,23 @@
+# Device-spec: HealthHub (SPLIT APK set: base.apk + split_config.* -> adb install-multiple -r).
+# Boots the pixel-a37 device and provisions it with the HealthHub app installed. Point
+# target_apk at the base.apk; env-up auto-detects the split_config.* siblings beside it.
+#   bin/env-up  --spec devices/healthhub.yaml
+#   bin/verify  --spec devices/healthhub.yaml
+#   bin/env-down --spec devices/healthhub.yaml
+
+name: healthhub                 # AVD name + adb tag
+device_profile: pixel           # avdmanager -d <profile>
+system_image: "system-images;android-37.1;google_apis_ps16k;arm64-v8a"
+api: "37.1"                     # env-up asserts config.ini target == android-37.1
+
+ram_mb: 4096                    # hw.ramSize
+cores: 4                        # hw.cpu.ncore
+data_size_mb: 8192              # disk.dataPartition.size
+
+# --- ticket 04: provisioning ---
+# APK lives in the untracked in-project corpus (apks/, gitignored). Path is repo-relative;
+# env-up/bin/verify resolve it against CWD then the repo root (apk_resolve_path).
+target_apk: "apks/healthhub/base.apk"
+provision: true
+frida: true
+normalize_settings: true
