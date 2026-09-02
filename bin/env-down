@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# env-down — tear down the emulator instance created by env-up.
+#
+# Kills the running emulator on the target port and, by default, deletes the AVD — the
+# harness's invariant is "reset = full rebuild, no golden snapshot" (CONTEXT.md), so the
+# up/down pair is symmetric: env-up creates, env-down removes. Pass --keep-avd to only
+# kill the running instance and leave the AVD on disk.
+#
+# Teardown must work even if the system image was since uninstalled, so it reads only the
+# AVD name from the spec — it does NOT run full spec validation.
+#
+#   bin/env-down --spec devices/pixel-a37.yaml [--port 5554] [--keep-avd]
+#   bin/env-down --name pixel-a37 [--port 5554] [--keep-avd]
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./env.sh
+. "$HERE/env.sh"
+# shellcheck source=./_spec.sh
+. "$HERE/_spec.sh"
+# shellcheck source=./_device.sh
+. "$HERE/_device.sh"
+
+log() { printf 'env-down: %s\n' "$*" >&2; }
+
+usage() { echo "usage: env-down (--spec <spec.yaml> | --name <avd>) [--port <console_port>] [--keep-avd]" >&2; }
+
+SPEC= NAME= PORT=5554 KEEP_AVD=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --spec) SPEC=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+    --spec=*) SPEC=${1#--spec=}; shift ;;
+    --name) NAME=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+    --name=*) NAME=${1#--name=}; shift ;;
+    --port) PORT=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+    --port=*) PORT=${1#--port=}; shift ;;
+    --keep-avd) KEEP_AVD=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) log "unknown argument: $1"; usage; exit 2 ;;
+  esac
+done
+
+case "$PORT" in ''|*[!0-9]*) log "--port must be numeric, got '$PORT'"; exit 2 ;; esac
+
+# Resolve the AVD name: --name wins; else read just .name from the spec.
+if [ -z "$NAME" ]; then
+  [ -n "$SPEC" ] || { log "need --spec <file> or --name <avd>"; usage; exit 2; }
+  NAME="$(spec_name "$SPEC")" || { log "cannot read .name from $SPEC"; exit 2; }
+  [ -n "$NAME" ] || { log "spec $SPEC has no .name"; exit 2; }
+fi
+
+SERIAL="emulator-$PORT"
+rc=0
+
+# --- kill the running instance (idempotent) ----------------------------------------------
+if command -v adb >/dev/null 2>&1; then
+  log "killing any instance on $SERIAL"
+  emu_kill "$SERIAL" || { log "WARNING: $SERIAL would not exit — kill it by hand"; rc=1; }
+else
+  log "WARNING: adb not on PATH — skipping instance kill (source bin/env.sh)"
+fi
+
+# --- delete the AVD unless asked to keep it ----------------------------------------------
+if [ "$KEEP_AVD" -eq 1 ]; then
+  log "keeping AVD '$NAME' (--keep-avd)"
+elif command -v avdmanager >/dev/null 2>&1; then
+  log "deleting AVD '$NAME'"
+  avdmanager delete avd -n "$NAME" >/dev/null 2>&1 \
+    || log "note: avdmanager reported no AVD '$NAME' to delete (already gone)"
+else
+  log "WARNING: avdmanager not on PATH — cannot delete AVD '$NAME' (source bin/env.sh)"
+  rc=1
+fi
+
+[ "$rc" -eq 0 ] && log "done"
+exit "$rc"

@@ -1,0 +1,17 @@
+# Device-spec for the emulator harness (ticket 03+).
+# Declarative source of truth for one bare device. Parsed with `yq` (bin/_spec.sh);
+# nothing here is hardcoded in the scripts. Values mirror the pinned toolchain in
+# versions.txt and the verified bring-up in RUNBOOK.md.
+
+name: pixel-a37                 # AVD name + adb tag; env-up/env-down key off this
+device_profile: pixel          # avdmanager -d <profile> (Pixel hardware profile)
+
+# Rootable google_apis image (NOT the playstore variant). Must be installed:
+#   sdkmanager "system-images;android-37.1;google_apis_ps16k;arm64-v8a"
+system_image: "system-images;android-37.1;google_apis_ps16k;arm64-v8a"
+api: "37.1"                     # env-up asserts config.ini target == android-37.1
+                                # (an api-0 AVD boots to a black screen — see RUNBOOK)
+
+ram_mb: 4096                    # hw.ramSize
+cores: 4                        # hw.cpu.ncore
+data_size_mb: 8192              # disk.dataPartition.size (formatted on -wipe-data cold boot)

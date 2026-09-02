@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# env-up — boot a bare emulator from a device-spec YAML to full readiness.
+#
+# Reads a validated device-spec (bin/_spec.sh), creates the AVD if needed (idempotent),
+# cold-boots it from scratch on an explicit port, and returns only once the device is
+# genuinely usable. Prints the adb serial `emulator-<console_port>` on stdout (and nothing
+# else there, so callers can capture it); all progress goes to stderr.
+#
+# No provisioning here (no root/frida/APK) — that is ticket 04. Teardown is bin/env-down.
+#
+#   bin/env-up --spec devices/pixel-a37.yaml [--port 5554]
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./env.sh
+. "$HERE/env.sh"
+# shellcheck source=./_spec.sh
+. "$HERE/_spec.sh"
+# shellcheck source=./_device.sh
+. "$HERE/_device.sh"
+
+log() { printf 'env-up: %s\n' "$*" >&2; }
+die() { printf 'env-up: %s\n' "$*" >&2; exit 1; }
+
+usage() { echo "usage: env-up --spec <device-spec.yaml> [--port <console_port>]" >&2; }
+
+SPEC= PORT=5554
+BOOT_TIMEOUT=${ENV_UP_BOOT_TIMEOUT:-420}   # cold boot + wipe-data can take minutes
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --spec) SPEC=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+    --spec=*) SPEC=${1#--spec=}; shift ;;
+    --port) PORT=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+    --port=*) PORT=${1#--port=}; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) log "unknown argument: $1"; usage; exit 2 ;;
+  esac
+done
+
+case "$PORT" in ''|*[!0-9]*) die "--port must be numeric, got '$PORT'";; esac
+# The emulator console port must be even (adb takes the odd port+1), and adb only
+# auto-discovers the 5554–5584 range — outside it the device never appears (RUNBOOK).
+if [ $((PORT % 2)) -ne 0 ] || [ "$PORT" -lt 5554 ] || [ "$PORT" -gt 5584 ]; then
+  die "--port must be an even console port in 5554–5584 (adb only discovers that range), got '$PORT'"
+fi
+
+# --- validate the spec (also confirms the system image is installed) ---------------------
+spec_load "$SPEC" || exit $?
+
+# --- tools present? give an actionable pointer instead of a raw command-not-found --------
+for t in avdmanager emulator adb; do
+  command -v "$t" >/dev/null 2>&1 || die "$t not on PATH — run 'source bin/env.sh' (see bin/doctor)"
+done
+
+SERIAL="emulator-$PORT"
+AVD_HOME="${ANDROID_AVD_HOME:-$HOME/.android/avd}"
+CFG="$AVD_HOME/${SPEC_NAME}.avd/config.ini"
+
+# --- create the AVD (idempotent: reuse an existing one) ----------------------------------
+if [ -f "$CFG" ]; then
+  # Reuse keys on the AVD name, so guard against a stale AVD built from a DIFFERENT spec:
+  # the target/API check below can't catch an image swap at the same API level, and a
+  # mismatched profile would boot the wrong hardware. Refuse rather than silently boot it.
+  want_sysdir="${SPEC_SYSTEM_IMAGE//;//}"; want_sysdir="${want_sysdir%/}"
+  have_sysdir="$(cfg_get "$CFG" image.sysdir.1)"; have_sysdir="${have_sysdir%/}"
+  have_dev="$(cfg_get "$CFG" hw.device.name)"
+  if [ -n "$have_sysdir" ] && [ "$have_sysdir" != "$want_sysdir" ]; then
+    die "AVD '$SPEC_NAME' already exists for a different system_image:
+        have: $have_sysdir
+        want: $want_sysdir
+        tear it down first (reset = full rebuild): bin/env-down --spec $SPEC"
+  fi
+  if [ -n "$have_dev" ] && [ "$have_dev" != "$SPEC_DEVICE_PROFILE" ]; then
+    die "AVD '$SPEC_NAME' already exists for a different device_profile (have '$have_dev',
+        want '$SPEC_DEVICE_PROFILE') — bin/env-down --spec $SPEC first, then re-run env-up."
+  fi
+  log "AVD '$SPEC_NAME' already exists — reusing ($CFG)"
+else
+  log "creating AVD '$SPEC_NAME' from $SPEC_SYSTEM_IMAGE (device=$SPEC_DEVICE_PROFILE)"
+  # `echo no` declines the "custom hardware profile?" prompt. cmdline-tools >= 23.0
+  # (put on PATH by env.sh) writes target=android-<api>; the old 12.0 wrote android-0.
+  # Route avdmanager's progress to stderr so stdout stays clean for the serial line.
+  echo "no" | avdmanager create avd -n "$SPEC_NAME" -k "$SPEC_SYSTEM_IMAGE" -d "$SPEC_DEVICE_PROFILE" 1>&2 \
+    || die "avdmanager create failed for '$SPEC_NAME'"
+fi
+
+# --- assert target=android-<api>: the api-0 black-screen guard (RUNBOOK / ticket 02) -----
+TARGET="$(avd_target "$CFG")"
+WANT="android-${SPEC_API}"
+if [ "$TARGET" != "$WANT" ]; then
+  die "AVD target is '${TARGET:-unset}', expected '$WANT' — an api-0 AVD boots to a black screen.
+        This means the AVD was created by cmdline-tools < 23.0. Fix: source bin/env.sh (so the
+        23.0 tools win), tear it down (bin/env-down --spec $SPEC), and re-run env-up."
+fi
+log "AVD target OK: $TARGET"
+
+# --- apply the spec's hardware sizing to the AVD (single source of truth = the YAML) -----
+cfg_set "$CFG" hw.ramSize             "$SPEC_RAM_MB"
+cfg_set "$CFG" hw.cpu.ncore           "$SPEC_CORES"
+cfg_set "$CFG" disk.dataPartition.size "${SPEC_DATA_SIZE_MB}M"
+
+# --- kill any prior instance on this port BEFORE launching -------------------------------
+# A second `emulator … -port 5554` launched over a live one lands on undiscoverable random
+# ports (adb only scans 5554–5584) and looks stuck. Always clear the port first (RUNBOOK).
+log "clearing any prior instance on $SERIAL"
+emu_kill "$SERIAL" || die "an emulator on $SERIAL would not exit — kill it by hand and retry"
+
+# --- cold boot from scratch, headless, on the explicit port ------------------------------
+LOG="$AVD_HOME/${SPEC_NAME}.avd/env-up-boot.log"
+log "cold-booting '$SPEC_NAME' on port $PORT (headless, -wipe-data); log: $LOG"
+nohup emulator -avd "$SPEC_NAME" -no-window -no-snapshot-load -wipe-data \
+      -port "$PORT" -no-audio -gpu swiftshader_indirect \
+      >"$LOG" 2>&1 &
+EMU_PID=$!
+disown 2>/dev/null || true
+
+# --- wait for genuine readiness (fail fast if the emulator process dies at launch) -------
+log "waiting for boot (up to ${BOOT_TIMEOUT}s)…"
+emu_wait_boot "$SERIAL" "$BOOT_TIMEOUT" "$EMU_PID"; wait_rc=$?
+case "$wait_rc" in
+  0) ;;
+  2) die "the emulator process exited before $SERIAL booted — see $LOG" ;;
+  *) die "device $SERIAL did not reach a ready state within ${BOOT_TIMEOUT}s — see $LOG" ;;
+esac
+log "device ready: $SERIAL"
+
+# The one line on stdout: the serial, for callers to capture.
+printf '%s\n' "$SERIAL"
