@@ -132,7 +132,7 @@ Derive the package + launchable activity from the APK itself — nothing app-spe
 
 ```bash
 AAPT=$(ls "$ANDROID_SDK_ROOT"/build-tools/*/aapt | sort -V | tail -1)
-APK=~/Downloads/for_cyber_stuffs/healthhub/base.apk
+APK=apks/healthhub/base.apk   # in-project APK corpus (untracked apks/, gitignored)
 "$AAPT" dump badging "$APK" | grep -E '^package:|launchable-activity:'
 # package: name='sg.gov.hpb.healthhub' ...
 # launchable-activity: name='sg.gov.hpb.healthhub.LauncherActivity' ...
@@ -147,10 +147,10 @@ adb -s emulator-5554 install -r "$APK"
 
 # split APK set (HealthHub): install base + all splits together
 adb -s emulator-5554 install-multiple -r \
-  ~/Downloads/for_cyber_stuffs/healthhub/base.apk \
-  ~/Downloads/for_cyber_stuffs/healthhub/split_config.arm64_v8a.apk \
-  ~/Downloads/for_cyber_stuffs/healthhub/split_config.en.apk \
-  ~/Downloads/for_cyber_stuffs/healthhub/split_config.xxhdpi.apk
+  apks/healthhub/base.apk \
+  apks/healthhub/split_config.arm64_v8a.apk \
+  apks/healthhub/split_config.en.apk \
+  apks/healthhub/split_config.xxhdpi.apk
 ```
 
 ## 6. Confirm the t=0 state
