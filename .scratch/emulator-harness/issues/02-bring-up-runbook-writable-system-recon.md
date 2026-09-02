@@ -28,7 +28,7 @@ from-scratch cold boot, provisioning driven against the live device.
   it and is the default dynamic-agent launch profile; `-writable-system` is the opt-in variant.
 - **Root cause found (fed into tickets 01/03):** `avdmanager` from cmdline-tools **12.0** can't
   parse this image's SDK-XML v4, so it writes **`target=android-0`** → black-screen boot. Fix:
-  use cmdline-tools **≥ 23.0** (installed here at `cmdline-tools/latest-2`). Not an HVF, host, or
+  use cmdline-tools **≥ 23.0** (now merged into `cmdline-tools/latest`). Not an HVF, host, or
   agent-harness problem.
 - **Operational footgun (fed into tickets 03/05/06):** launching a second `emulator … -port
   5554` without killing the first leaves the loser on undiscoverable random ports (adb scans

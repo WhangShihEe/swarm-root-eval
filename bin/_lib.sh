@@ -92,7 +92,7 @@ check_cmdline_tools() {
     pass cmdline-tools "$rev  ($path)"
   else
     fail cmdline-tools "revision $rev is too old to parse the v4 image XML — it writes target=android-0 -> black-screen boot" \
-         "install cmdline-tools >= $want (the 'latest-2' package); env.sh prefers the newest, so re-run: source bin/env.sh"
+         "install/update cmdline-tools to >= $want via the SDK Manager; env.sh prefers the newest, so re-run: source bin/env.sh"
   fi
 }
 

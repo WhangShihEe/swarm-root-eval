@@ -31,11 +31,11 @@ rootable — avoid it).
 > hand.
 >
 > **Fix (verified — the created `config.ini` then reads `target=android-37.1` and
-> `tag.ids=google_apis,page_size_16kb`):** create the AVD with **cmdline-tools 23.0**, which is
-> already installed here at `cmdline-tools/latest-2` (12.0 is at `latest`, and that's what
-> `env.sh` currently puts on PATH). This is really an **issue-01/03 fix** — `env.sh`/`doctor`
-> should prefer the newest `cmdline-tools` and `doctor` should reject `target=android-0`. Step 1
-> below uses the 23.0 binary explicitly until that lands.
+> `tag.ids=google_apis,page_size_16kb`):** create the AVD with **cmdline-tools 23.0**. As of
+> issue-01 this is automatic: the stale 12.0 and the 23.0 `cmdline-tools` have been merged into a
+> single `cmdline-tools/latest` (23.0), `env.sh` prefers the newest revision, and `doctor`
+> rejects any `cmdline-tools` too old to parse the v4 image XML (the 12.0 that writes
+> `target=android-0`). Just `source bin/env.sh` and the 23.0 `avdmanager` is on PATH.
 >
 > **Confirmed (2026-09-01):** a corrected AVD (23.0 tools, `target=android-37.1`) cold-boots
 > cleanly in a real terminal — `Boot completed in 13077 ms`, no `hvf is not enabled`. So the
@@ -63,11 +63,10 @@ in the commands below.
 
 ```bash
 : "${SYSTEM_IMAGE:?run 'source bin/env.sh' first — it loads versions.txt}"   # fail loud if env not sourced
-# Use cmdline-tools 23.0 (NOT the 12.0 on PATH): 12.0 mis-parses the v4 image XML and
-# writes target=android-0 -> black screen. See the GOTCHA box above.
-AVDM="$ANDROID_SDK_ROOT/cmdline-tools/latest-2/bin/avdmanager"
-"$AVDM" delete avd -n pixel-a37 2>/dev/null || true             # start from nothing
-echo "no" | "$AVDM" create avd -n pixel-a37 -k "$SYSTEM_IMAGE" -d pixel
+# env.sh puts cmdline-tools 23.0 on PATH (it prefers the newest revision) and doctor
+# rejects anything too old to parse the v4 image XML. See the GOTCHA box above.
+avdmanager delete avd -n pixel-a37 2>/dev/null || true          # start from nothing
+echo "no" | avdmanager create avd -n pixel-a37 -k "$SYSTEM_IMAGE" -d pixel
 grep -E '^target=|^tag.ids=' ~/.android/avd/pixel-a37.avd/config.ini   # MUST show target=android-37.1
 ```
 
