@@ -82,6 +82,7 @@ spec_load() {
   SPEC_PROVISION=$(spec_bool "$f" provision true)
   SPEC_FRIDA=$(spec_bool "$f" frida true)
   SPEC_NORMALIZE_SETTINGS=$(spec_bool "$f" normalize_settings true)
+  SPEC_HEADLESS=$(spec_bool "$f" headless true)   # false -> env-up boots with a window
   return 0
 }
 

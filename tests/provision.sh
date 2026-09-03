@@ -103,17 +103,17 @@ echo "== spec: no new keys -> loads, toggles default true, target_apk empty =="
 S1="$(mktemp)"; base_spec "$S1"
 out="$(ANDROID_SDK_ROOT="$FAKE_SDK" bash -c '
   . "'"$ROOT"'/bin/_spec.sh"; spec_load "'"$S1"'" || exit 9
-  printf "%s|%s|%s|%s\n" "${SPEC_TARGET_APK-<UNSET>}" "$SPEC_PROVISION" "$SPEC_FRIDA" "$SPEC_NORMALIZE_SETTINGS"')"
-check "defaults (target_apk set-but-empty)" "$out" "|true|true|true"
+  printf "%s|%s|%s|%s|%s\n" "${SPEC_TARGET_APK-<UNSET>}" "$SPEC_PROVISION" "$SPEC_FRIDA" "$SPEC_NORMALIZE_SETTINGS" "$SPEC_HEADLESS"')"
+check "defaults (headless true too)" "$out" "|true|true|true|true"
 rm -f "$S1"
 
-echo "== spec: target_apk + provision:false honored =="
+echo "== spec: target_apk + provision:false + headless:false honored =="
 S2="$(mktemp)"; base_spec "$S2"
-printf 'target_apk: "/apks/rootbeer.apk"\nprovision: false\nfrida: true\nnormalize_settings: false\n' >> "$S2"
+printf 'target_apk: "/apks/rootbeer.apk"\nprovision: false\nfrida: true\nnormalize_settings: false\nheadless: false\n' >> "$S2"
 out="$(ANDROID_SDK_ROOT="$FAKE_SDK" bash -c '
   . "'"$ROOT"'/bin/_spec.sh"; spec_load "'"$S2"'" || exit 9
-  printf "%s|%s|%s|%s\n" "$SPEC_TARGET_APK" "$SPEC_PROVISION" "$SPEC_FRIDA" "$SPEC_NORMALIZE_SETTINGS"')"
-check "explicit values" "$out" "/apks/rootbeer.apk|false|true|false"
+  printf "%s|%s|%s|%s|%s\n" "$SPEC_TARGET_APK" "$SPEC_PROVISION" "$SPEC_FRIDA" "$SPEC_NORMALIZE_SETTINGS" "$SPEC_HEADLESS"')"
+check "explicit values" "$out" "/apks/rootbeer.apk|false|true|false|false"
 rm -f "$S2"
 rm -rf "$FAKE_SDK"
 

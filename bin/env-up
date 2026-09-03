@@ -14,6 +14,7 @@
 #
 #   bin/env-up --spec devices/pixel-a37.yaml [--port 5554] [--target-apk <apk|dir>]
 #   TARGET_APK=<apk> bin/env-up --spec devices/pixel-a37.yaml
+#   bin/env-up --spec devices/rootbeer.yaml --window   # watch a real emulator on screen
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,11 +30,11 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 log() { printf 'env-up: %s\n' "$*" >&2; }
 die() { printf 'env-up: %s\n' "$*" >&2; exit 1; }
 
-usage() { echo "usage: env-up --spec <device-spec.yaml> [--port <console_port>] [--target-apk <apk|dir>]" >&2; }
+usage() { echo "usage: env-up --spec <device-spec.yaml> [--port <console_port>] [--target-apk <apk|dir>] [--window|--no-window]" >&2; }
 
 # TARGET_APK env var seeds the target; a --target-apk flag or a TARGET_APK=<path> token
 # overrides it, and the spec's target_apk is the fallback (resolved after spec_load).
-SPEC= PORT=5554 TARGET_APK_ARG=${TARGET_APK:-}
+SPEC= PORT=5554 TARGET_APK_ARG=${TARGET_APK:-} HEADLESS_ARG=
 BOOT_TIMEOUT=${ENV_UP_BOOT_TIMEOUT:-420}   # cold boot + wipe-data can take minutes
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -44,6 +45,8 @@ while [ $# -gt 0 ]; do
     --target-apk) TARGET_APK_ARG=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
     --target-apk=*) TARGET_APK_ARG=${1#--target-apk=} ; shift ;;
     TARGET_APK=*) TARGET_APK_ARG=${1#TARGET_APK=} ; shift ;;   # literal ticket syntax
+    --window|--headed)    HEADLESS_ARG=false; shift ;;   # show the emulator window
+    --no-window|--headless) HEADLESS_ARG=true; shift ;;  # force headless (the default)
     -h|--help) usage; exit 0 ;;
     *) log "unknown argument: $1"; usage; exit 2 ;;
   esac
@@ -117,10 +120,18 @@ cfg_set "$CFG" disk.dataPartition.size "${SPEC_DATA_SIZE_MB}M"
 log "clearing any prior instance on $SERIAL"
 emu_kill "$SERIAL" || die "an emulator on $SERIAL would not exit — kill it by hand and retry"
 
-# --- cold boot from scratch, headless, on the explicit port ------------------------------
+# --- cold boot from scratch, on the explicit port ----------------------------------------
+# Headless by default (the harness/broker never needs a window); flip it with --window (or
+# spec `headless: false`) to watch a real emulator on screen while testing. Resolve
+# headless: an explicit --window/--no-window flag wins over the spec's headless toggle.
+HEADLESS="$HEADLESS_ARG"
+[ -n "$HEADLESS" ] || HEADLESS="${SPEC_HEADLESS:-true}"
+if [ "$HEADLESS" = false ]; then WINDOW_FLAG=; MODE="windowed"; else WINDOW_FLAG="-no-window"; MODE="headless"; fi
+
 LOG="$AVD_HOME/${SPEC_NAME}.avd/env-up-boot.log"
-log "cold-booting '$SPEC_NAME' on port $PORT (headless, -wipe-data); log: $LOG"
-nohup emulator -avd "$SPEC_NAME" -no-window -no-snapshot-load -wipe-data \
+log "cold-booting '$SPEC_NAME' on port $PORT ($MODE, -wipe-data); log: $LOG"
+# shellcheck disable=SC2086  # WINDOW_FLAG is empty (windowed) or a single flag; splitting is intended
+nohup emulator -avd "$SPEC_NAME" $WINDOW_FLAG -no-snapshot-load -wipe-data \
       -port "$PORT" -no-audio -gpu swiftshader_indirect \
       >"$LOG" 2>&1 &
 EMU_PID=$!

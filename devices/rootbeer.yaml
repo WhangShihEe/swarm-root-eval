@@ -22,3 +22,4 @@ target_apk: "apks/rootbeer/rootbeer.apk"
 provision: true
 frida: true
 normalize_settings: true
+headless: true                  # false -> boot with a visible window (or run env-up --window)
