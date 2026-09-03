@@ -47,8 +47,15 @@ the term as defined here; don't drift to synonyms. Decisions that shaped these l
 - **Reset = full rebuild** — every bring-up and every reset is create → cold boot → provision
   from scratch. No golden snapshot (revisit only if bring-up time proves a bottleneck).
 - **Writable-`/system` verdict** — recon output (ticket 02): whether this image supports a
-  writable `/system`. The **Frida-only** bypass (root shell, `/system` untouched) is the
-  default dynamic-agent launch profile.
+  writable `/system`. It does. **Writable-`/system` is now the default dynamic-agent launch
+  profile** (ticket 07 / ADR-0001): `env-up` cold-boots with `-writable-system` and runs the
+  proven `disable-verity` + reboot + `remount` recipe, then provisions frida on top — so a
+  device has both a writable `/system` and frida. **Frida-only** (root shell, `/system`
+  untouched, lighter footprint) stays available via `writable_system: false`.
+- **Launch profile** — how a device is brought up, defined by the device-spec's
+  `writable_system` boolean (absent ⇒ `true` ⇒ writable-`/system`; `false` ⇒ Frida-only). An
+  `env-up`/broker CLI override can force either for a one-off run. Writable-`/system` bring-up
+  fails loudly if `/system` cannot be made writable — never a silent fallback to Frida-only.
 
 ## Inspect layer (separate, later)
 

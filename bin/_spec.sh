@@ -83,19 +83,38 @@ spec_load() {
   SPEC_FRIDA=$(spec_bool "$f" frida true)
   SPEC_NORMALIZE_SETTINGS=$(spec_bool "$f" normalize_settings true)
   SPEC_HEADLESS=$(spec_bool "$f" headless true)   # false -> env-up boots with a window
+
+  # ticket 07: the launch profile. writable_system is the full definition of how the device
+  # comes up — absent means true (the writable-/system profile is the default); false selects
+  # the Frida-only profile. Unlike the lenient provisioning toggles above, a present-but-
+  # non-boolean value is a spec error (the launch profile must be unambiguous), rejected here.
+  if ! SPEC_WRITABLE_SYSTEM=$(spec_bool_strict "$f" writable_system true); then
+    echo "spec: writable_system must be a boolean (true/false), got '$(yq '.writable_system' "$f" 2>/dev/null)'" >&2
+    return 2
+  fi
   return 0
 }
 
-# spec_bool FILE KEY DEFAULT — echo "true"/"false" for a boolean-ish scalar. A missing/null
-# or unrecognized value yields DEFAULT, so a bare spec keeps the documented defaults.
+# spec_bool_strict FILE KEY DEFAULT — normalize a boolean-ish scalar, distinguishing
+# "absent" from "invalid": an absent/null key echoes DEFAULT (rc 0); a recognized boolean
+# echoes its normalized value (rc 0); a present-but-unrecognized value echoes nothing and
+# returns 1, so the caller can reject the whole spec. Used for the launch-profile flag,
+# which must not silently fall back to a default when someone typos it (ticket 07).
 # Reads the key directly (NOT via spec_get): yq's `//` alternative operator treats a real
-# boolean `false` as empty, which would silently turn an explicit `provision: false` into
-# the default. `yq '.key'` returns true/false/null verbatim.
-spec_bool() {
+# boolean `false` as empty, which would conflate an explicit `false` with "absent".
+# `yq '.key'` returns true/false/null verbatim.
+spec_bool_strict() {
   local v; v=$(yq ".${2}" "$1" 2>/dev/null | tr '[:upper:]' '[:lower:]')
   case "$v" in
-    true|1|yes|on)  echo true ;;
-    false|0|no|off) echo false ;;
-    *)              echo "$3" ;;
+    null|'')        echo "$3"; return 0 ;;
+    true|1|yes|on)  echo true;  return 0 ;;
+    false|0|no|off) echo false; return 0 ;;
+    *)              return 1 ;;
   esac
 }
+
+# spec_bool FILE KEY DEFAULT — the lenient variant: echo "true"/"false", with a missing/null
+# OR unrecognized value all yielding DEFAULT (a bare spec keeps the documented defaults, and
+# a typo'd provisioning toggle degrades to the default rather than aborting). Layered on the
+# strict primitive: an invalid value trips its rc 1, and `|| echo "$3"` supplies the default.
+spec_bool() { spec_bool_strict "$1" "$2" "$3" || echo "$3"; }

@@ -30,11 +30,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 log() { printf 'env-up: %s\n' "$*" >&2; }
 die() { printf 'env-up: %s\n' "$*" >&2; exit 1; }
 
-usage() { echo "usage: env-up --spec <device-spec.yaml> [--port <console_port>] [--target-apk <apk|dir>] [--window|--no-window]" >&2; }
+usage() { echo "usage: env-up --spec <device-spec.yaml> [--port <console_port>] [--target-apk <apk|dir>] [--window|--no-window] [--writable-system|--frida-only|--profile <p>]" >&2; }
 
 # TARGET_APK env var seeds the target; a --target-apk flag or a TARGET_APK=<path> token
 # overrides it, and the spec's target_apk is the fallback (resolved after spec_load).
-SPEC= PORT=5554 TARGET_APK_ARG=${TARGET_APK:-} HEADLESS_ARG=
+# WRITABLE_ARG (from --writable-system/--frida-only/--profile) overrides the spec's
+# writable_system; empty means "use the spec" (ticket 07).
+SPEC= PORT=5554 TARGET_APK_ARG=${TARGET_APK:-} HEADLESS_ARG= WRITABLE_ARG=
 BOOT_TIMEOUT=${ENV_UP_BOOT_TIMEOUT:-420}   # cold boot + wipe-data can take minutes
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -47,6 +49,22 @@ while [ $# -gt 0 ]; do
     TARGET_APK=*) TARGET_APK_ARG=${1#TARGET_APK=} ; shift ;;   # literal ticket syntax
     --window|--headed)    HEADLESS_ARG=false; shift ;;   # show the emulator window
     --no-window|--headless) HEADLESS_ARG=true; shift ;;  # force headless (the default)
+    --writable-system) WRITABLE_ARG=true; shift ;;       # force the writable-/system profile
+    --frida-only)      WRITABLE_ARG=false; shift ;;      # force the Frida-only profile
+    --profile) # writable-system | frida-only — an explicit override of the spec's profile
+      case "${2:-}" in
+        writable-system) WRITABLE_ARG=true ;;
+        frida-only)      WRITABLE_ARG=false ;;
+        *) log "--profile must be 'writable-system' or 'frida-only', got '${2:-}'"; exit 2 ;;
+      esac
+      shift $(( $# > 1 ? 2 : 1 )) ;;
+    --profile=*)
+      case "${1#--profile=}" in
+        writable-system) WRITABLE_ARG=true ;;
+        frida-only)      WRITABLE_ARG=false ;;
+        *) log "--profile must be 'writable-system' or 'frida-only', got '${1#--profile=}'"; exit 2 ;;
+      esac
+      shift ;;
     -h|--help) usage; exit 0 ;;
     *) log "unknown argument: $1"; usage; exit 2 ;;
   esac
@@ -128,10 +146,20 @@ HEADLESS="$HEADLESS_ARG"
 [ -n "$HEADLESS" ] || HEADLESS="${SPEC_HEADLESS:-true}"
 if [ "$HEADLESS" = false ]; then WINDOW_FLAG=; MODE="windowed"; else WINDOW_FLAG="-no-window"; MODE="headless"; fi
 
+# --- resolve the launch profile (ticket 07) ----------------------------------------------
+# writable-/system is the default: absent spec key -> SPEC_WRITABLE_SYSTEM=true. A CLI
+# override (--writable-system/--frida-only/--profile) wins over the spec's value. On the
+# writable-/system profile the emulator must be cold-booted with `-writable-system`; the
+# disable-verity + reboot + remount recipe below only works on such a boot.
+WRITABLE_SYSTEM="$WRITABLE_ARG"
+[ -n "$WRITABLE_SYSTEM" ] || WRITABLE_SYSTEM="${SPEC_WRITABLE_SYSTEM:-true}"
+if [ "$WRITABLE_SYSTEM" = true ]; then WRITABLE_FLAG="-writable-system"; PROFILE="writable-system"; else WRITABLE_FLAG=; PROFILE="frida-only"; fi
+log "launch profile: $PROFILE"
+
 LOG="$AVD_HOME/${SPEC_NAME}.avd/env-up-boot.log"
-log "cold-booting '$SPEC_NAME' on port $PORT ($MODE, -wipe-data); log: $LOG"
-# shellcheck disable=SC2086  # WINDOW_FLAG is empty (windowed) or a single flag; splitting is intended
-nohup emulator -avd "$SPEC_NAME" $WINDOW_FLAG -no-snapshot-load -wipe-data \
+log "cold-booting '$SPEC_NAME' on port $PORT ($MODE, $PROFILE, -wipe-data); log: $LOG"
+# shellcheck disable=SC2086  # WINDOW_FLAG/WRITABLE_FLAG are each empty or a single flag; splitting is intended
+nohup emulator -avd "$SPEC_NAME" $WINDOW_FLAG $WRITABLE_FLAG -no-snapshot-load -wipe-data \
       -port "$PORT" -no-audio -gpu swiftshader_indirect \
       >"$LOG" 2>&1 &
 EMU_PID=$!
@@ -146,6 +174,22 @@ case "$wait_rc" in
   *) die "device $SERIAL did not reach a ready state within ${BOOT_TIMEOUT}s — see $LOG" ;;
 esac
 log "device ready: $SERIAL"
+
+# --- make /system writable (ticket 07, writable-/system profile only) --------------------
+# The device was cold-booted with -writable-system above; now run the proven recipe (adb
+# root -> disable-verity -> reboot -> re-wait -> remount) to actually make /system RW, then
+# prove it with a write/read-back/delete. FAIL LOUDLY on any failure — a caller that asked
+# for a writable /system must never be handed a device without one (no silent fallback to
+# Frida-only). Provisioning (frida/APK/settings) then layers on top, unchanged.
+if [ "$WRITABLE_SYSTEM" = true ]; then
+  log "making /system writable (disable-verity + reboot + remount)…"
+  if ! emu_make_system_writable "$SERIAL" "$BOOT_TIMEOUT" "$EMU_PID"; then
+    die "could not make /system writable on $SERIAL (writable-/system profile) — see $LOG.
+        The device was booted with -writable-system but the disable-verity/reboot/remount
+        recipe did not yield a writable /system. Not falling back to Frida-only."
+  fi
+  log "/system is writable (overlayfs): $SERIAL"
+fi
 
 # --- provision to t=0 (ticket 04) --------------------------------------------------------
 # Resolve the target APK: an explicit --target-apk / TARGET_APK arg wins over the spec's

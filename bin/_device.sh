@@ -55,6 +55,54 @@ emu_booted() {
   && [ -n "$(adb -s "$serial" shell pm path android 2>/dev/null)" ]
 }
 
+# --- writable-/system launch profile (ticket 07) -----------------------------------------
+# The proven recipe from ticket 02 / RUNBOOK: on a userdebug+verity image a plain `adb root`
+# cannot write /system, so the device must be cold-booted with `-writable-system` (env-up
+# adds the flag) and then have verity disabled + a reboot + a remount applied. These talk to
+# a live device, so they are exercised by a real env-up bring-up, not the hermetic suite.
+
+# emu_system_writable SERIAL — 0 iff /system is *genuinely* writable: write a throwaway file,
+# read it back, delete it. The definitive check — getprop veritymode still prints "enforcing"
+# after a successful remount (it's the static boot flag), so only a real write proves it.
+emu_system_writable() {
+  local serial=$1 probe="/system/harness-probe-$$" out
+  out=$(adb -s "$serial" shell "echo probe > $probe && cat $probe && rm -f $probe" 2>/dev/null | tr -d '\r')
+  [ "$out" = probe ]
+}
+
+# emu_make_system_writable SERIAL TIMEOUT_S [PID] — run the proven recipe end to end against
+# a device already cold-booted with `-writable-system`: adb root, disable-verity, reboot,
+# re-wait for the device to come back genuinely booted, adb root again, remount → /system RW
+# (overlayfs). Returns 0 iff /system ends genuinely writable (probed), non-zero otherwise —
+# the caller MUST fail loudly and never hand back a device without the writable /system it
+# asked for. The final probe is the authority; the intermediate steps are best-effort.
+emu_make_system_writable() {
+  local serial=$1 timeout=$2 pid=${3:-}
+  adb -s "$serial" root >/dev/null 2>&1 || true
+  adb -s "$serial" wait-for-device >/dev/null 2>&1 || true
+  adb -s "$serial" disable-verity >/dev/null 2>&1 || true   # only takes effect after a reboot
+  adb -s "$serial" reboot >/dev/null 2>&1 || true
+  _emu_wait_reboot "$serial" "$timeout" "$pid" || return 1
+  adb -s "$serial" root >/dev/null 2>&1 || true
+  adb -s "$serial" wait-for-device >/dev/null 2>&1 || true
+  adb -s "$serial" remount >/dev/null 2>&1 || true          # /system now mounted rw
+  emu_system_writable "$serial"
+}
+
+# _emu_wait_reboot SERIAL TIMEOUT_S [PID] — after an `adb reboot`, wait for the reboot to
+# actually take (boot_completed stops reading 1) before re-checking full readiness. Without
+# this bound the still-up pre-reboot state could read as "booted" and we'd remount too early.
+# Returns like emu_wait_boot (0 booted, 1 timeout, 2 emulator PID died first).
+_emu_wait_reboot() {
+  local serial=$1 timeout=$2 pid=${3:-} i
+  for i in $(seq 1 30); do
+    [ "$(adb -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ] || break
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then return 2; fi
+    sleep 1
+  done
+  emu_wait_boot "$serial" "$timeout" "$pid"
+}
+
 # emu_wait_boot SERIAL TIMEOUT_S [PID] — block until emu_booted. Returns:
 #   0 booted; 1 timed out after TIMEOUT_S; 2 the emulator PID (if given) exited first.
 # We deliberately do NOT call `adb wait-for-device` here: it blocks indefinitely, so a

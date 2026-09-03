@@ -244,3 +244,9 @@ interception, or a persistent system `su`).
 (root shell + frida-server, no `/system`), with `-writable-system` + `disable-verity` + reboot
 as an **opt-in** launch variant for the CA-cert / persistent-`su` cases. Baseline set-1
 provisioning stays entirely in `/data`.
+
+> **Default reversed (2026-09-03, ticket 07 / ADR-0001):** the dynamic-agent default is now
+> **writable-`/system`**, not Frida-only. `env-up` automates the recipe above from the
+> device-spec's `writable_system` toggle (absent ⇒ writable-`/system`); Frida-only stays
+> available via `writable_system: false`. The evidence and recipe here are unchanged — they are
+> what `env-up` now runs. See `docs/adr/0001-writable-system-default-launch-profile.md`.

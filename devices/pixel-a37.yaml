@@ -28,3 +28,13 @@ data_size_mb: 8192              # disk.dataPartition.size (formatted on -wipe-da
 # frida: true                # push + start the pinned frida-server (versions.txt)
 # normalize_settings: true   # zero the three animation scales
 # headless: true             # false -> env-up boots with a visible window (or pass --window)
+
+# --- ticket 07: launch profile -----------------------------------------------------------
+# writable_system defines how the device launches. ABSENT MEANS true: the writable-/system
+# profile (the default) — env-up cold-boots with -writable-system and runs the proven recipe
+# (disable-verity + reboot + remount) so /system is RW (overlayfs), then provisions frida on
+# top. Set false for the Frida-only profile (root + frida, /system untouched, lighter). A CLI
+# override (env-up --writable-system / --frida-only / --profile <p>) wins for a one-off run.
+# See docs/adr/0001-writable-system-default-launch-profile.md.
+#
+# writable_system: true      # (default when absent) writable-/system; false -> Frida-only

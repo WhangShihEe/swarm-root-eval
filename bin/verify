@@ -25,9 +25,9 @@ if [ -t 1 ]; then _G=$'\033[32m'; _R=$'\033[31m'; _Z=$'\033[0m'; else _G=; _R=; 
 pass() { printf '  %s✓%s %s\n' "$_G" "$_Z" "$1" >&2; }
 fail() { printf '  %s✗%s %s\n' "$_R" "$_Z" "$1" >&2; [ -n "${2:-}" ] && printf '     → %s\n' "$2" >&2; exit 1; }
 log()  { printf 'verify: %s\n' "$*" >&2; }
-usage(){ echo "usage: verify [--serial <s> | --port <p>] (--package <pkg> | --target-apk <apk|dir> | --spec <yaml>)" >&2; }
+usage(){ echo "usage: verify [--serial <s> | --port <p>] (--package <pkg> | --target-apk <apk|dir> | --spec <yaml>) [--writable-system|--frida-only|--profile <p>]" >&2; }
 
-SERIAL= PORT=5554 PKG= TARGET_APK= SPEC=
+SERIAL= PORT=5554 PKG= TARGET_APK= SPEC= WRITABLE_ARG=
 while [ $# -gt 0 ]; do
   case "$1" in
     --serial) SERIAL=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
@@ -40,6 +40,22 @@ while [ $# -gt 0 ]; do
     --target-apk=*) TARGET_APK=${1#--target-apk=}; shift ;;
     --spec) SPEC=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
     --spec=*) SPEC=${1#--spec=}; shift ;;
+    --writable-system) WRITABLE_ARG=true; shift ;;       # force the writable-/system profile
+    --frida-only)      WRITABLE_ARG=false; shift ;;      # force the Frida-only profile
+    --profile) # writable-system | frida-only — an explicit override of the spec's profile
+      case "${2:-}" in
+        writable-system) WRITABLE_ARG=true ;;
+        frida-only)      WRITABLE_ARG=false ;;
+        *) log "--profile must be 'writable-system' or 'frida-only', got '${2:-}'"; exit 2 ;;
+      esac
+      shift $(( $# > 1 ? 2 : 1 )) ;;
+    --profile=*)
+      case "${1#--profile=}" in
+        writable-system) WRITABLE_ARG=true ;;
+        frida-only)      WRITABLE_ARG=false ;;
+        *) log "--profile must be 'writable-system' or 'frida-only', got '${1#--profile=}'"; exit 2 ;;
+      esac
+      shift ;;
     -h|--help) usage; exit 0 ;;
     *) log "unknown argument: $1"; usage; exit 2 ;;
   esac
@@ -63,7 +79,24 @@ fi
 
 command -v adb >/dev/null 2>&1 || fail "adb not on PATH" "source bin/env.sh"
 
-log "checking $SERIAL for package $PKG"
+# Resolve the launch profile to check against (ticket 07): an explicit
+# --writable-system/--frida-only/--profile wins; else the spec's writable_system (default
+# true when the key is absent); else frida-only — with neither a flag nor a spec we have no
+# basis to demand a writable /system, so we check only what a Frida-only device guarantees.
+WRITABLE="$WRITABLE_ARG"
+if [ -z "$WRITABLE" ] && [ -n "$SPEC" ]; then
+  # Only need writable_system, so tolerate rc 3 (image not installed on this host — verify
+  # checks a running device, not the SDK). But rc 2 is a genuinely bad spec (e.g. a typo'd
+  # writable_system): surface it loudly rather than silently defaulting to the frida-only
+  # check, which would under-check a device the spec meant to bring up writable-/system.
+  spec_load "$SPEC" >/dev/null 2>&1; sl_rc=$?
+  [ "$sl_rc" = 2 ] && fail "invalid spec: $SPEC" "$(spec_load "$SPEC" 2>&1 >/dev/null | head -1)"
+  WRITABLE="${SPEC_WRITABLE_SYSTEM:-}"
+fi
+[ -n "$WRITABLE" ] || WRITABLE=false
+if [ "$WRITABLE" = true ]; then PROFILE=writable-system; else PROFILE=frida-only; fi
+
+log "checking $SERIAL for package $PKG (profile: $PROFILE)"
 
 # 1. reachable + genuinely booted
 emu_present "$SERIAL" || fail "$SERIAL is not in 'adb devices'" "boot it: bin/env-up --spec <yaml>"
@@ -79,5 +112,14 @@ pass "frida-server up (frida-ps -D $SERIAL lists processes)"
 verify_package "$SERIAL" "$PKG" || fail "$PKG is not installed on $SERIAL" "install it: provision with --target-apk"
 pass "package present: $PKG"
 
-printf '%sverify: OK%s — %s is provisioned (%s)\n' "$_G" "$_Z" "$SERIAL" "$PKG" >&2
+# 4. writable /system (writable-/system profile only). On Frida-only this is skipped — that
+# profile leaves /system untouched by design, so demanding a writable /system would be wrong.
+if [ "$WRITABLE" = true ]; then
+  emu_system_writable "$SERIAL" \
+    || fail "/system is not writable on $SERIAL (writable-/system profile)" \
+            "re-run env-up on the writable-/system profile (cold-boot -writable-system + disable-verity + reboot + remount)"
+  pass "/system is writable (write/read-back/delete on /system succeeded)"
+fi
+
+printf '%sverify: OK%s — %s is provisioned (%s, %s)\n' "$_G" "$_Z" "$SERIAL" "$PKG" "$PROFILE" >&2
 exit 0

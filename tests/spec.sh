@@ -47,6 +47,29 @@ out="$(ANDROID_SDK_ROOT="$FAKE_SDK" bash -c '
          "$SPEC_API" "$SPEC_RAM_MB" "$SPEC_CORES" "$SPEC_DATA_SIZE_MB"')"
 check "all SPEC_* exported" "$out" "pixel-a37|pixel|$IMG|37.1|4096|4|8192"
 
+echo "== spec_load: writable_system launch profile (ticket 07) =="
+# SPEC_WRITABLE_SYSTEM drives the launch profile: absent => true (writable-/system default),
+# an explicit boolean is honored, and a non-boolean value is rejected like any other bad field.
+read_ws() {  # SPEC_FILE -> echoes SPEC_WRITABLE_SYSTEM (or "RC<n>" if spec_load failed)
+  ANDROID_SDK_ROOT="$FAKE_SDK" bash -c '
+    . "'"$ROOT"'/bin/_spec.sh"
+    spec_load "'"$1"'" >/dev/null 2>&1 || { echo "RC$?"; exit 0; }
+    printf "%s\n" "$SPEC_WRITABLE_SYSTEM"'
+}
+WS="$(mktemp)"
+write_spec "$WS"                                   # no writable_system key
+check "absent writable_system -> true (default)" "$(read_ws "$WS")" "true"
+write_spec "$WS"; printf 'writable_system: false\n' >> "$WS"
+check "writable_system: false -> false"          "$(read_ws "$WS")" "false"
+write_spec "$WS"; printf 'writable_system: true\n' >> "$WS"
+check "writable_system: true -> true"            "$(read_ws "$WS")" "true"
+write_spec "$WS"; printf 'writable_system: maybe\n' >> "$WS"
+msg="$(ANDROID_SDK_ROOT="$FAKE_SDK" spec_load "$WS" 2>&1)"; rc=$?
+check "writable_system: maybe -> rc 2"           "$rc" "2"
+case "$msg" in *writable_system*) ok "message names writable_system" ;;
+  *) bad "message did not name writable_system: $msg" ;; esac
+rm -f "$WS"
+
 echo "== spec_load: rejects a missing file =="
 ANDROID_SDK_ROOT="$FAKE_SDK" spec_load "$FAKE_SDK/nope.yaml" >/dev/null 2>&1
 check "missing file -> rc 2" "$?" "2"
