@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# broker — the standing device broker (ticket 06) over the pool engine (bin/_pool.sh).
+#
+# Start it ONCE before an eval; it persists across requests, owns the emulator pool, and
+# enforces the cap (POOL_CAP, default 3). Clients are separate `bin/broker <verb>` invocations
+# that reach the running broker over its file-backed queue under BROKER_DIR.
+#
+#   bin/broker start [--profile frida-only|writable-system] [--foreground]
+#   bin/broker acquire --spec devices/rootbeer.yaml [--target-apk <apk>] [env-up args…]
+#   bin/broker status
+#   bin/broker release (--serial emulator-5554 | --port 5554)
+#   bin/broker ping
+#   bin/broker stop
+#   bin/broker demo    --spec devices/rootbeer.yaml   # start, grant 2, release both, stop
+#
+# On `acquire` the broker prints a connection contract the client drives over adb itself:
+#   serial=emulator-5554 console_port=5554 adb_port=5555 profile=frida-only
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./env.sh
+. "$HERE/env.sh"
+# shellcheck source=./_pool.sh
+. "$HERE/_pool.sh"
+# shellcheck source=./_broker.sh
+. "$HERE/_broker.sh"
+
+log()   { printf 'broker: %s\n' "$*" >&2; }
+usage() {
+  cat >&2 <<'EOF'
+usage: broker <command> [args]
+  start [--profile <p>] [--foreground]   launch the standing broker (default profile frida-only)
+  stop                                   stop it, reclaiming every device
+  acquire --spec <yaml> [env-up args…]   grant one device; prints its connection contract
+  release (--serial <s> | --port <p>)    release a device, freeing its slot
+  status                                 show the pool registry (via the running broker)
+  list                                   print the in-use console ports, one per line
+  ping                                   liveness + which profile the broker is serving
+  demo --spec <yaml>                     start, grant 2, release both, stop — the live path
+EOF
+}
+
+# _broker_spawn PROFILE — start the daemon in the background and wait for it to come alive.
+_broker_spawn() {
+  local profile=$1 i
+  mkdir -p "$(broker_dir)"
+  nohup "$0" __serve --profile "$profile" >"$(broker_dir)/broker.log" 2>&1 &
+  for i in $(seq 1 50); do
+    broker_running && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+cmd="${1:-}"; shift 2>/dev/null || true
+
+case "$cmd" in
+  start)
+    profile="$BROKER_DEFAULT_PROFILE"; foreground=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --profile) profile=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+        --profile=*) profile=${1#--profile=}; shift ;;
+        --foreground|--fg) foreground=1; shift ;;
+        *) log "unknown argument: $1"; usage; exit 2 ;;
+      esac
+    done
+    # Fail fast on a bad/unwired profile before spawning; broker_serve re-checks authoritatively.
+    broker_profile_gate "$profile" || exit 2
+    if broker_running; then log "already running (pid=$(broker_pid), profile=$(broker_current_profile))"; exit 0; fi
+    if [ "$foreground" -eq 1 ]; then
+      exec "$0" __serve --profile "$profile"
+    fi
+    if _broker_spawn "$profile"; then
+      log "started (pid=$(broker_pid) profile=$profile) — log: $(broker_dir)/broker.log"
+    else
+      log "failed to start — see $(broker_dir)/broker.log"; exit 1
+    fi
+    ;;
+
+  # Hidden: the daemon body. `start` re-execs this so the serving process is a clean child
+  # that writes its own pidfile. Not part of the public CLI.
+  __serve)
+    profile="$BROKER_DEFAULT_PROFILE"
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --profile) profile=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+        --profile=*) profile=${1#--profile=}; shift ;;
+        *) shift ;;
+      esac
+    done
+    broker_serve "$profile"
+    ;;
+
+  stop)
+    if broker_running; then
+      pid="$(broker_pid)"
+      kill "$pid" 2>/dev/null || true
+      # Wait for the daemon's EXIT trap to reclaim the pool and drop the pidfile. The grace is
+      # long (BROKER_STOP_GRACE, default 600s) on purpose: bash defers the TERM trap until any
+      # in-flight foreground env-up (a multi-minute cold boot) returns, and only THEN does the
+      # trap run pool_teardown_all. Out-waiting the boot lets the daemon clean up its own device;
+      # force-killing sooner would orphan the still-booting emulator. Escalate only as a last
+      # resort — a boot that outlasts the grace.
+      grace="${BROKER_STOP_GRACE:-600}"
+      for i in $(seq 1 $(( grace * 10 ))); do broker_running || break; sleep 0.1; done
+      if broker_running; then
+        log "did not stop within ${grace}s (pid=$pid) — killing; a still-booting emulator may be orphaned"
+        kill -9 "$pid" 2>/dev/null || true
+        sleep 0.2
+        pool_teardown_all >/dev/null 2>&1 || true   # trap didn't run: reclaim devices ourselves
+      fi
+      broker_stop_cleanup
+      log "stopped"
+    else
+      broker_stop_cleanup
+      log "not running"
+    fi
+    ;;
+
+  acquire)
+    spec=""; rest=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --spec) spec=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+        --spec=*) spec=${1#--spec=}; shift ;;
+        *) rest+=("$1"); shift ;;        # everything else forwards to env-up via the pool engine
+      esac
+    done
+    [ -n "$spec" ] || { log "acquire needs --spec <yaml>"; usage; exit 2; }
+    # ${rest[@]+…} guard: on macOS bash 3.2 a bare "${rest[@]}" for an empty array trips set -u.
+    broker_request acquire "$spec" ${rest[@]+"${rest[@]}"}
+    ;;
+
+  release)
+    id=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --serial) id=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+        --serial=*) id=${1#--serial=}; shift ;;
+        --port) id=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+        --port=*) id=${1#--port=}; shift ;;
+        *) log "unknown argument: $1"; usage; exit 2 ;;
+      esac
+    done
+    [ -n "$id" ] || { log "release needs --serial <s> or --port <p>"; usage; exit 2; }
+    broker_request release "$id"
+    ;;
+
+  status)
+    if broker_running; then broker_request status
+    else log "not running (start it: bin/broker start) — raw registry: bin/pool status"; exit 1; fi
+    ;;
+  list) broker_request list ;;
+  ping) broker_request ping ;;
+
+  demo)
+    spec=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --spec) spec=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+        --spec=*) spec=${1#--spec=}; shift ;;
+        *) log "unknown argument: $1"; usage; exit 2 ;;
+      esac
+    done
+    [ -n "$spec" ] || { log "demo needs --spec <yaml>"; usage; exit 2; }
+
+    if broker_running; then log "demo: a broker is already running — stop it first: bin/broker stop"; exit 1; fi
+    log "demo: starting broker (profile=$BROKER_DEFAULT_PROFILE, cap=$(pool_cap))"
+    _broker_spawn "$BROKER_DEFAULT_PROFILE" || { log "demo: broker failed to start — see $(broker_dir)/broker.log"; exit 1; }
+    # Always stop the broker (which reclaims every device) on the way out, however we leave.
+    trap '"$0" stop >/dev/null 2>&1 || true' EXIT
+
+    broker_request ping >/dev/null || { log "demo: broker not answering"; exit 1; }
+    c1="$(broker_request acquire "$spec")" || { log "demo: first acquire failed: $c1"; exit 1; }
+    c2="$(broker_request acquire "$spec")" || { log "demo: second acquire failed: $c2"; exit 1; }
+    s1="${c1#serial=}"; s1="${s1%% *}"
+    s2="${c2#serial=}"; s2="${s2%% *}"
+    printf 'granted:\n  %s\n  %s\n' "$c1" "$c2"
+    printf 'adb serials: %s  %s\n' "$s1" "$s2"
+
+    log "demo: releasing both"
+    broker_request release "$s1" >/dev/null || log "demo: release $s1 reported an error"
+    broker_request release "$s2" >/dev/null || log "demo: release $s2 reported an error"
+    # Capture the listing separately so a failed query (e.g. the broker died) is an error, not a
+    # silent "0 in use" — piping straight into grep -c would print 0 on empty input either way.
+    listing="$(broker_request list)" || { log "demo: could not query the pool — is the broker alive?"; exit 1; }
+    n="$(printf '%s' "$listing" | grep -c . || true)"
+    if [ "$n" -eq 0 ]; then log "demo: pool clean (0 in use) — OK"
+    else log "demo: pool NOT clean ($n slots remain)"; broker_request status; exit 1; fi
+    # EXIT trap stops the broker.
+    ;;
+
+  ''|-h|--help) usage; [ -z "$cmd" ] && exit 2 || exit 0 ;;
+  *) log "unknown command: $cmd"; usage; exit 2 ;;
+esac

@@ -4,3 +4,7 @@
 # Pool engine runtime state — registry + per-slot AVD homes (ticket 05). Machine-local,
 # rebuilt from scratch on every acquire; never committed. Override with POOL_DIR.
 /.pool/
+
+# Broker runtime state — request queue + pidfile + profile marker + broker.log (ticket 06).
+# Machine-local, owned by the standing broker process; never committed. Override with BROKER_DIR.
+/.broker/
