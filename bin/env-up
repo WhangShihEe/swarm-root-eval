@@ -36,6 +36,9 @@ usage() { echo "usage: env-up --spec <device-spec.yaml> [--port <console_port>] 
 # overrides it, and the spec's target_apk is the fallback (resolved after spec_load).
 # WRITABLE_ARG (from --writable-system/--frida-only/--profile) overrides the spec's
 # writable_system; empty means "use the spec" (ticket 07).
+# ENVUP_PROFILE_OUT (env var, optional): a file path we write the resolved profile name to
+# (writable-system|frida-only), so a caller can record the real profile without touching our
+# serial-only stdout (ticket 08).
 SPEC= PORT=5554 TARGET_APK_ARG=${TARGET_APK:-} HEADLESS_ARG= WRITABLE_ARG=
 BOOT_TIMEOUT=${ENV_UP_BOOT_TIMEOUT:-420}   # cold boot + wipe-data can take minutes
 while [ $# -gt 0 ]; do
@@ -155,6 +158,10 @@ WRITABLE_SYSTEM="$WRITABLE_ARG"
 [ -n "$WRITABLE_SYSTEM" ] || WRITABLE_SYSTEM="${SPEC_WRITABLE_SYSTEM:-true}"
 if [ "$WRITABLE_SYSTEM" = true ]; then WRITABLE_FLAG="-writable-system"; PROFILE="writable-system"; else WRITABLE_FLAG=; PROFILE="frida-only"; fi
 log "launch profile: $PROFILE"
+# Report the resolved profile to a caller that asked for it via ENVUP_PROFILE_OUT (ticket 08:
+# the pool records the *real* profile each slot came up under — spec-resolved or CLI override —
+# so the connection contract/status can report it, without parsing our serial-only stdout).
+[ -n "${ENVUP_PROFILE_OUT:-}" ] && printf '%s\n' "$PROFILE" > "$ENVUP_PROFILE_OUT"
 
 LOG="$AVD_HOME/${SPEC_NAME}.avd/env-up-boot.log"
 log "cold-booting '$SPEC_NAME' on port $PORT ($MODE, $PROFILE, -wipe-data); log: $LOG"

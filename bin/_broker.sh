@@ -23,11 +23,12 @@
 # That keeps the owner single-threaded and the cap trivially correct; a concurrency layer is a
 # later optimization, not needed for a cap-3 pool where N=1 is the default path.
 #
-# Launch profile — the dynamic-agent recipe (writable-/system vs Frida-only, per ticket 02's
-# verdict) is a broker-level launch option set at `start`, defaulting to Frida-only. Frida-only
-# is the wired recipe (provisioning writes only to /data — bin/_provision.sh); writable-/system
-# is a recognized profile but is NOT yet wired into env-up (it stays opt-in, see RUNBOOK), so
-# starting under it fails fast with a pointer rather than silently delivering Frida-only.
+# Launch profile — a brokered device comes up under the profile its SPEC defines (writable-/
+# system by default — ticket 07). The broker no longer owns a default profile; `start
+# --profile <p>` is an optional OVERRIDE forced across every grant (a lighter frida-only
+# footprint for a whole run, say), forwarded to env-up via the pool. The connection contract,
+# `ping`, and `status` report the REAL profile each device came up under (spec-resolved, or the
+# override) — not a fixed string (ticket 08).
 #
 # The dispatch/registry logic is unit-tested in tests/broker.sh with the pool engine's fake
 # env-up/env-down injected (POOL_ENV_UP/POOL_ENV_DOWN), and the start→request→stop lifecycle is
@@ -49,34 +50,41 @@ broker_queue()        { printf '%s\n' "$(broker_dir)/queue"; }
 broker_pidfile()      { printf '%s\n' "$(broker_dir)/broker.pid"; }
 broker_profile_file() { printf '%s\n' "$(broker_dir)/profile"; }
 
-# --- launch profiles ---------------------------------------------------------------------
+# --- launch profiles (ticket 08) ---------------------------------------------------------
+# The broker no longer owns a default profile: a grant HONORS THE SPEC (writable-/system by
+# default — ticket 07). `broker start --profile <p>` is an optional OVERRIDE, forced across
+# every grant, forwarded to env-up via the pool on each acquire. env-up resolves + reports the
+# real profile and the pool records it, so the contract/ping/status show what a device actually
+# came up under. Both wired profiles are deliverable now, so nothing force-downgrades.
 BROKER_PROFILES="frida-only writable-system"
-BROKER_DEFAULT_PROFILE="frida-only"
+BROKER_PROFILE_OVERRIDE=""    # no override: each grant honors its own spec's profile
 
 # broker_valid_profile P — 0 iff P names a known launch profile.
 broker_valid_profile() {
   case " $BROKER_PROFILES " in *" $1 "*) return 0 ;; *) return 1 ;; esac
 }
 
-# broker_profile_supported P — 0 iff the bring-up path can actually deliver profile P. Only
-# Frida-only is wired into env-up today; writable-/system is recognized but opt-in and not yet
-# built, so the broker refuses to start under it instead of silently launching Frida-only.
-broker_profile_supported() { [ "$1" = "frida-only" ]; }
-
-# broker_profile_gate P — 0 iff P is a usable launch profile; else prints the reason to stderr
-# and returns 2. The single source of truth for the profile policy + its messages, called by
-# BOTH the daemon (broker_serve) and the CLI (`bin/broker start`) so the two can't drift.
+# broker_profile_gate P — 0 iff P is a usable profile OVERRIDE: empty (no override ⇒ honor the
+# spec) or a known profile name. Else prints the reason to stderr and returns 2. Both wired
+# profiles are deliverable (ticket 07), so the gate only rejects an unknown name. The single
+# source of truth for the override policy + its message, called by BOTH the daemon
+# (broker_serve) and the CLI (`bin/broker start`) so the two can't drift.
 broker_profile_gate() {
   local p=$1
+  [ -n "$p" ] || return 0    # no override: honor each spec's profile
   broker_valid_profile "$p" \
     || { echo "broker: unknown launch profile '$p' (known: $BROKER_PROFILES)" >&2; return 2; }
-  broker_profile_supported "$p" \
-    || { echo "broker: launch profile '$p' is not wired into env-up yet — ticket 02's verdict is Frida-only; the writable-/system recipe stays opt-in (see RUNBOOK)" >&2; return 2; }
 }
 
-# broker_current_profile — the profile the running broker was started under (default if none).
-broker_current_profile() {
-  cat "$(broker_profile_file)" 2>/dev/null || printf '%s\n' "$BROKER_DEFAULT_PROFILE"
+# broker_override — the profile override the running broker was started under, or empty when it
+# honors each spec's profile (the default). Persisted in the profile file.
+broker_override() { cat "$(broker_profile_file)" 2>/dev/null; }
+
+# broker_policy_label — a parseable description of the broker's profile policy for ping/status:
+# the override profile when one is forced, else `per-spec` (each grant follows its own spec).
+broker_policy_label() {
+  local o; o="$(broker_override)"
+  [ -n "$o" ] && printf '%s\n' "$o" || printf 'per-spec\n'
 }
 
 # --- liveness ----------------------------------------------------------------------------
@@ -98,7 +106,7 @@ broker_running() {
 # (a stop signal or a fatal error) reclaims every device so no orphaned emulator outlives the
 # broker. Blocks until told to stop; returns 2 if the profile is unusable.
 broker_serve() {
-  local prof="${1:-$BROKER_DEFAULT_PROFILE}"
+  local prof="${1:-$BROKER_PROFILE_OVERRIDE}"
   broker_profile_gate "$prof" || return 2
 
   local pf; pf="$(broker_pidfile)"; mkdir -p "$(broker_dir)"
@@ -121,7 +129,7 @@ broker_serve() {
   trap '_broker_cleanup' EXIT
   trap '_BROKER_STOP=1'  TERM INT
 
-  echo "broker: serving (pid=$$ profile=$prof cap=$(pool_cap) pool_dir=$(pool_dir))" >&2
+  echo "broker: serving (pid=$$ profile=$(broker_policy_label) cap=$(pool_cap) pool_dir=$(pool_dir))" >&2
   local reqdir
   while [ "$_BROKER_STOP" -eq 0 ]; do
     for reqdir in "$(broker_queue)"/*; do
@@ -168,11 +176,17 @@ broker_handle() {
       if [ -z "$spec" ]; then
         body="broker: acquire needs a device-spec"; rc=2
       else
+        # The start-time override (if any) is forced across every grant: forward it to env-up
+        # via the pool, appended LAST so it wins over any profile flag a client passed in rest.
+        # Empty override ⇒ nothing appended ⇒ env-up honors the spec's profile.
+        local override prof_args=()
+        override="$(broker_override)"
+        [ -n "$override" ] && prof_args=(--profile "$override")
         local out
-        out="$(pool_acquire "$spec" ${rest[@]+"${rest[@]}"} 2>"$err")"; rc=$?
+        out="$(pool_acquire "$spec" ${rest[@]+"${rest[@]}"} ${prof_args[@]+"${prof_args[@]}"} 2>"$err")"; rc=$?
         cat "$err" >&2 2>/dev/null || true    # surface env-up progress/refusal into the broker log
         if [ "$rc" -eq 0 ]; then
-          body="$out profile=$(broker_current_profile)"
+          body="$out"                         # the pool contract already carries the real profile=
           grant_serial="${out#serial=}"; grant_serial="${grant_serial%% *}"
         else
           body="$(cat "$err" 2>/dev/null)"    # relay the engine's reason as a clean refusal
@@ -194,7 +208,7 @@ broker_handle() {
     status)   body="$(pool_status)"; rc=0 ;;
     list)     body="$(pool_list)";   rc=0 ;;   # an empty pool is success, not an error
                                                # (pool_list's trailing grep would else rc 1 under pipefail)
-    ping)     body="pong pid=$$ profile=$(broker_current_profile) cap=$(pool_cap) in-use=$(pool_count)"; rc=0 ;;
+    ping)     body="pong pid=$$ profile=$(broker_policy_label) cap=$(pool_cap) in-use=$(pool_count)"; rc=0 ;;
     shutdown) body="bye"; rc=0; _BROKER_STOP=1 ;;
     *)        body="broker: unknown request '$verb'"; rc=2 ;;
   esac

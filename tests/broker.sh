@@ -24,11 +24,16 @@ export BROKER_POLL=0.05 BROKER_CLIENT_POLL=0.05 BROKER_CLIENT_TIMEOUT=20
 FAKEBIN="$SANDBOX/bin"; mkdir -p "$FAKEBIN"
 cat > "$FAKEBIN/env-up" <<'EOF'
 #!/usr/bin/env bash
-port=5554
+port=5554 ; profile=writable-system   # env-up's default when honoring the spec (ticket 07)
 while [ $# -gt 0 ]; do case "$1" in
   --port) port=$2; shift 2 ;; --port=*) port=${1#--port=}; shift ;;
+  --writable-system) profile=writable-system; shift ;;
+  --frida-only) profile=frida-only; shift ;;
+  --profile) profile=$2; shift 2 ;; --profile=*) profile=${1#--profile=}; shift ;;
   *) shift ;;
 esac; done
+# Report the resolved profile like real env-up (ticket 08) so the pool can record it.
+[ -n "${ENVUP_PROFILE_OUT:-}" ] && printf '%s\n' "$profile" > "$ENVUP_PROFILE_OUT"
 [ "${FAKE_UP_DELAY:-0}" != 0 ] && sleep "$FAKE_UP_DELAY"   # stand in for a slow cold boot
 [ "${FAKE_UP_FAIL:-0}" = 1 ] && { echo "fake env-up: forced failure" >&2; exit 1; }
 printf 'emulator-%s\n' "$port"
@@ -67,21 +72,26 @@ mk_req() {
   { printf '%s\n' "$verb"; [ $# -gt 0 ] && printf '%s\n' "$@"; } > "$rd/req"
 }
 
-echo "== launch profiles: known/default/supported =="
+echo "== launch profiles: known / no default override / the override gate (ticket 08) =="
 check "frida-only is valid"        "$(broker_valid_profile frida-only     && echo y || echo n)" "y"
 check "writable-system is valid"   "$(broker_valid_profile writable-system && echo y || echo n)" "y"
 check "bogus profile invalid"      "$(broker_valid_profile bogus           && echo y || echo n)" "n"
-check "default profile"            "$BROKER_DEFAULT_PROFILE" "frida-only"
-check "frida-only supported"       "$(broker_profile_supported frida-only     && echo y || echo n)" "y"
-check "writable-system unsupported" "$(broker_profile_supported writable-system && echo y || echo n)" "n"
+# The broker owns no default profile now — an empty override means "honor each spec".
+check "no default override"        "$BROKER_PROFILE_OVERRIDE" ""
+check "empty override passes gate" "$(broker_profile_gate ""             2>/dev/null && echo y || echo n)" "y"
+check "known override passes gate" "$(broker_profile_gate writable-system 2>/dev/null && echo y || echo n)" "y"
+check "bogus override fails gate"  "$(broker_profile_gate bogus           2>/dev/null && echo y || echo n)" "n"
+# policy label: per-spec when no override profile file exists.
+check "policy label per-spec"      "$(BROKER_DIR="$SANDBOX/no-such" broker_policy_label)" "per-spec"
 
-echo "== dispatch: acquire writes a contract + profile and registers a slot =="
+echo "== dispatch: acquire writes a contract with the real profile + registers a slot =="
 reset
 _BROKER_STOP=0
 RD="$BROKER_DIR/queue/t-acq"; mk_req "$RD" acquire "$SPEC"
 POOL_CAP=3 broker_handle "$RD"
 check "acquire rc 0"      "$(cat "$RD/rc")"   "0"
-check "acquire contract"  "$(cat "$RD/resp")" "serial=emulator-5554 console_port=5554 adb_port=5555 profile=frida-only"
+# No override set, so the grant honors the spec — the fake env-up resolves writable-system.
+check "acquire contract"  "$(cat "$RD/resp")" "serial=emulator-5554 console_port=5554 adb_port=5555 profile=writable-system"
 check "one slot in pool"  "$(pool_count)"     "1"
 
 echo "== dispatch: acquire with no spec is refused (rc 2) =="
@@ -124,7 +134,8 @@ check "empty list rc 0"    "$(cat "$RLE/rc")"   "0"
 check "empty list is blank" "$(cat "$RLE/resp")" ""
 RD="$BROKER_DIR/queue/t-s1"; mk_req "$RD" acquire "$SPEC"; POOL_CAP=3 broker_handle "$RD"
 RP="$BROKER_DIR/queue/t-ping"; mk_req "$RP" ping; broker_handle "$RP"
-grep -q "^pong .*profile=frida-only" "$RP/resp" && ok "ping reports the profile" || bad "ping: $(cat "$RP/resp")"
+# No override configured for this dispatch test, so ping reports the per-spec policy.
+grep -q "^pong .*profile=per-spec" "$RP/resp" && ok "ping reports the profile policy" || bad "ping: $(cat "$RP/resp")"
 _BROKER_STOP=0
 RH="$BROKER_DIR/queue/t-sd"; mk_req "$RH" shutdown; broker_handle "$RH"
 check "shutdown sets stop flag" "$_BROKER_STOP" "1"
@@ -151,7 +162,8 @@ check "broker is running" "$(broker_running && echo y || echo n)" "y"
 "$ROOT/bin/broker" ping >/dev/null 2>&1; check "ping rc 0" "$?" "0"
 c1="$("$ROOT/bin/broker" acquire --spec "$SPEC")"; rc=$?
 check "acquire rc 0"     "$rc" "0"
-check "acquire contract" "$c1" "serial=emulator-5554 console_port=5554 adb_port=5555 profile=frida-only"
+# Default start honors the spec, so the grant is a writable-system device (fake env-up).
+check "acquire contract" "$c1" "serial=emulator-5554 console_port=5554 adb_port=5555 profile=writable-system"
 check "pool has 1"       "$("$ROOT/bin/broker" list | grep -c .)" "1"
 "$ROOT/bin/broker" release --serial emulator-5554 >/dev/null 2>&1; check "release rc 0" "$?" "0"
 check "pool clean"       "$("$ROOT/bin/broker" list | grep -c . || true)" "0"
@@ -169,11 +181,26 @@ check "2nd acquire rc 3" "$rc" "3"
 grep -q "full" <<<"$out" && ok "wire refusal explains full pool" || bad "refusal: $out"
 "$ROOT/bin/broker" stop >/dev/null 2>&1
 
-echo "== start refuses the unwired writable-/system profile (rc 2), no daemon =="
+echo "== start --profile writable-system now starts (wired, ticket 08); bogus still rc 2 =="
 reset
-"$ROOT/bin/broker" start --profile writable-system >/dev/null 2>&1; check "writable-system start rc 2" "$?" "2"
-check "no daemon spawned" "$(broker_running && echo y || echo n)" "n"
+"$ROOT/bin/broker" start --profile writable-system >/dev/null 2>&1; check "writable-system start rc 0" "$?" "0"
+check "daemon running under the override" "$(broker_running && echo y || echo n)" "y"
+pong="$("$ROOT/bin/broker" ping 2>/dev/null)"
+grep -q "profile=writable-system" <<<"$pong" && ok "ping reports the override profile" || bad "ping: $pong"
+"$ROOT/bin/broker" stop >/dev/null 2>&1
+reset
 "$ROOT/bin/broker" start --profile bogus >/dev/null 2>&1; check "bogus profile start rc 2" "$?" "2"
+check "no daemon on bogus" "$(broker_running && echo y || echo n)" "n"
+
+echo "== an override forces its profile across grants, reported in the contract (ticket 08) =="
+reset
+"$ROOT/bin/broker" start --profile frida-only >/dev/null 2>&1; check "override start rc 0" "$?" "0"
+c="$("$ROOT/bin/broker" acquire --spec "$SPEC")"; rc=$?
+check "acquire under override rc 0"        "$rc" "0"
+check "contract shows the forced profile" "$c" "serial=emulator-5554 console_port=5554 adb_port=5555 profile=frida-only"
+pong="$("$ROOT/bin/broker" ping 2>/dev/null)"
+grep -q "profile=frida-only" <<<"$pong" && ok "ping reports the forced profile" || bad "ping: $pong"
+"$ROOT/bin/broker" stop >/dev/null 2>&1
 
 echo "== a value-taking flag given no value errors, does NOT hang (bash 3.2 shift) =="
 # On macOS bash 3.2 `shift 2` with one positional left is a no-op, so a naive parse loops
@@ -182,6 +209,8 @@ reset
 with_timeout 5 "$ROOT/bin/broker" acquire --spec; check "acquire --spec <eol> rc 2" "$?" "2"
 with_timeout 5 "$ROOT/bin/broker" release --serial; check "release --serial <eol> rc 2" "$?" "2"
 with_timeout 5 "$ROOT/bin/broker" start --profile; check "start --profile <eol> rc 2" "$?" "2"
+# both spellings of an empty --profile are a typo, not "no override" (that is omitting the flag).
+with_timeout 5 "$ROOT/bin/broker" start --profile=; check "start --profile= (empty) rc 2" "$?" "2"
 
 echo "== a client that gives up mid-acquire does not orphan the device (auto-release) =="
 # Slow the fake boot to 2s and give the client a 1s timeout: it times out and removes its

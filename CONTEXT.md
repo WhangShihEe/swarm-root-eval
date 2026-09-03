@@ -35,8 +35,9 @@ the term as defined here; don't drift to synonyms. Decisions that shaped these l
   makes emulators a scarce, shared resource; it enforces the cap, not Inspect.
 - **Pool engine** — the in-process engine the broker wraps: launches, tracks (a registry),
   and reclaims N provisioned devices. Ticket 05.
-- **Connection contract** — what `acquire()` returns: `{serial, console_port, adb_port}` — how
-  a client reaches a granted device.
+- **Connection contract** — what `acquire()` returns: `{serial, console_port, adb_port, profile}`
+  — how a client reaches a granted device, plus the **real** launch profile it came up under
+  (spec-resolved, or a broker override) so a client knows if it was handed a writable `/system`.
 - **Brokered-adb** — the access model: the broker grants scoped **adb** access to its device;
   the agent then runs frida / objection / adb-shell itself. Not a gesture (screenshot/tap) API.
 - **Provisioning** — taking a booted device to **t=0**: root shell, frida-server (pinned
@@ -54,8 +55,12 @@ the term as defined here; don't drift to synonyms. Decisions that shaped these l
   untouched, lighter footprint) stays available via `writable_system: false`.
 - **Launch profile** — how a device is brought up, defined by the device-spec's
   `writable_system` boolean (absent ⇒ `true` ⇒ writable-`/system`; `false` ⇒ Frida-only). An
-  `env-up`/broker CLI override can force either for a one-off run. Writable-`/system` bring-up
+  `env-up` CLI override can force either for a one-off run. Writable-`/system` bring-up
   fails loudly if `/system` cannot be made writable — never a silent fallback to Frida-only.
+  Through the pool + broker (ticket 08) a grant **honors the spec's profile** — the broker owns
+  no default; `broker start --profile <p>` is an optional override forced across every grant.
+  The pool records the profile each slot actually came up under, so the connection contract,
+  `ping`, and `status` report the real profile, not a fixed string.
 
 ## Inspect layer (separate, later)
 

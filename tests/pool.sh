@@ -27,13 +27,18 @@ export FAKE_LOG="$POOL_ROOT/envup.log"
 export FAKE_STATUS="$POOL_ROOT/envup.status"
 cat > "$FAKEBIN/env-up" <<'EOF'
 #!/usr/bin/env bash
-port= ; spec=
+port= ; spec= ; profile=writable-system   # env-up's default when honoring the spec (ticket 07)
 while [ $# -gt 0 ]; do case "$1" in
   --port) port=$2; shift 2 ;; --port=*) port=${1#--port=}; shift ;;
   --spec) spec=$2; shift 2 ;; --spec=*) spec=${1#--spec=}; shift ;;
+  --writable-system) profile=writable-system; shift ;;
+  --frida-only) profile=frida-only; shift ;;
+  --profile) profile=$2; shift 2 ;; --profile=*) profile=${1#--profile=}; shift ;;
   *) shift ;;
 esac; done
-printf 'ARGS port=%s spec=%s avd_home=%s extra=%s\n' "$port" "$spec" "${ANDROID_AVD_HOME:-}" "$FAKE_UP_EXTRA_SEEN" >> "$FAKE_LOG"
+printf 'ARGS port=%s spec=%s avd_home=%s profile=%s\n' "$port" "$spec" "${ANDROID_AVD_HOME:-}" "$profile" >> "$FAKE_LOG"
+# Report the resolved profile like real env-up (ticket 08) so the engine can record it.
+[ -n "${ENVUP_PROFILE_OUT:-}" ] && printf '%s\n' "$profile" > "$ENVUP_PROFILE_OUT"
 # Peek at the registry mid-bring-up: the engine should have written status=building.
 if [ -n "${POOL_DIR:-}" ] && [ -f "$POOL_DIR/slots/$port" ]; then
   sed -n 's/^status=//p' "$POOL_DIR/slots/$port" >> "$FAKE_STATUS"
@@ -81,12 +86,14 @@ echo "== acquire (N=1 default path): registers slot + prints contract =="
 reset_pool
 out="$(POOL_CAP=3 pool_acquire "$SPEC")"; rc=$?
 check "acquire rc 0"        "$rc" "0"
-check "contract line"       "$out" "serial=emulator-5554 console_port=5554 adb_port=5555"
+check "contract line"       "$out" "serial=emulator-5554 console_port=5554 adb_port=5555 profile=writable-system"
 check "one slot registered" "$(pool_count)" "1"
 check "slot serial"         "$(pool_slot_get 5554 serial)"   "emulator-5554"
 check "slot adb_port"       "$(pool_slot_get 5554 adb_port)" "5555"
 check "slot status in-use"  "$(pool_slot_get 5554 status)"   "in-use"
 check "slot spec recorded"  "$(pool_slot_get 5554 spec)"     "$SPEC"
+# ticket 08: the engine records the real profile env-up resolved (spec default = writable-system)
+check "slot profile recorded" "$(pool_slot_get 5554 profile)" "writable-system"
 # env-up was called with the explicit port and a per-slot ANDROID_AVD_HOME under POOL_DIR
 grep -q "port=5554 " "$FAKE_LOG" && ok "env-up got --port 5554" || bad "env-up port"
 grep -q "avd_home=$POOL_DIR/5554/avd" "$FAKE_LOG" && ok "env-up got isolated avd_home" || bad "env-up avd_home"
@@ -107,13 +114,22 @@ chmod +x "$FAKEBIN/env-up-echo"
 POOL_ENV_UP="$FAKEBIN/env-up-echo" POOL_CAP=3 pool_acquire "$SPEC" --target-apk /x/y.apk >/dev/null
 grep -q -- "--target-apk /x/y.apk" "$FAKE_LOG" && ok "forwarded --target-apk to env-up" || bad "extra args not forwarded"
 
+echo "== the launch profile env-up resolves is recorded + reported (ticket 08) =="
+# A profile override passes through to env-up; the engine records the REAL profile env-up
+# resolved (here frida-only) and puts it in the connection contract + the slot registry.
+reset_pool
+c="$(POOL_CAP=3 pool_acquire "$SPEC" --profile frida-only)"
+check "contract carries the resolved profile" "$c" "serial=emulator-5554 console_port=5554 adb_port=5555 profile=frida-only"
+check "slot records the resolved profile"     "$(pool_slot_get 5554 profile)" "frida-only"
+grep -q "profile=frida-only" "$FAKE_LOG" && ok "env-up saw --profile frida-only" || bad "override not forwarded to env-up"
+
 echo "== two acquires get distinct ports + isolated avd homes =="
 reset_pool
 c1="$(POOL_CAP=3 pool_acquire "$SPEC")"
 c2="$(POOL_CAP=3 pool_acquire "$SPEC")"
 check "slot count 2"    "$(pool_count)" "2"
-check "first  is 5554"  "$c1" "serial=emulator-5554 console_port=5554 adb_port=5555"
-check "second is 5556"  "$c2" "serial=emulator-5556 console_port=5556 adb_port=5557"
+check "first  is 5554"  "$c1" "serial=emulator-5554 console_port=5554 adb_port=5555 profile=writable-system"
+check "second is 5556"  "$c2" "serial=emulator-5556 console_port=5556 adb_port=5557 profile=writable-system"
 check "distinct avd home 5554" "$(pool_slot_get 5554 avd_home)" "$POOL_DIR/5554/avd"
 check "distinct avd home 5556" "$(pool_slot_get 5556 avd_home)" "$POOL_DIR/5556/avd"
 
@@ -149,7 +165,7 @@ POOL_CAP=3 pool_acquire "$SPEC" >/dev/null   # 5554
 POOL_CAP=3 pool_acquire "$SPEC" >/dev/null   # 5556
 pool_release 5554
 c="$(POOL_CAP=3 pool_acquire "$SPEC")"        # should reclaim the lowest free = 5554
-check "reuses freed 5554" "$c" "serial=emulator-5554 console_port=5554 adb_port=5555"
+check "reuses freed 5554" "$c" "serial=emulator-5554 console_port=5554 adb_port=5555 profile=writable-system"
 
 echo "== bring-up failure reclaims the slot (registry stays clean) =="
 reset_pool

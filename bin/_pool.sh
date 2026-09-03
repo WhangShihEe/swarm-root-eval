@@ -16,7 +16,7 @@
 # verbatim (both the bring-up and the teardown paths) rather than reimplementing t=0.
 #
 # The registry is a directory of one key=value file per slot (serial/console_port/adb_port/
-# status/spec/avd_home). It is file-backed, not in-memory, so a standing broker (ticket 06)
+# status/profile/spec/avd_home). It is file-backed, not in-memory, so a standing broker (ticket 06)
 # can survive across requests and a demo can inspect it between calls. Statuses actually set:
 #   building  — slot reserved, env-up bring-up in progress (create + cold boot + provision)
 #   in-use    — handed out to a caller by acquire
@@ -108,10 +108,13 @@ _pool_free_port() {
 # --- connection contract -----------------------------------------------------------------
 
 # pool_contract PORT — echo the connection contract as one parseable key=value line:
-#   serial=emulator-5554 console_port=5554 adb_port=5555
+#   serial=emulator-5554 console_port=5554 adb_port=5555 profile=writable-system
+# The profile is the *real* launch profile the device came up under (ticket 08), recorded from
+# env-up's own resolution (spec default, or a CLI/broker override) — not a fixed string.
 pool_contract() {
-  printf 'serial=%s console_port=%s adb_port=%s\n' \
-    "$(pool_slot_get "$1" serial)" "$1" "$(pool_slot_get "$1" adb_port)"
+  printf 'serial=%s console_port=%s adb_port=%s profile=%s\n' \
+    "$(pool_slot_get "$1" serial)" "$1" "$(pool_slot_get "$1" adb_port)" \
+    "$(pool_slot_get "$1" profile)"
 }
 
 # --- acquire / release -------------------------------------------------------------------
@@ -175,9 +178,13 @@ pool_acquire() {
 
   # Bring up on the slot's isolated AVD home + explicit port, reusing ticket 04's env-up.
   # env-up prints only the serial on stdout; its progress goes to stderr (kept, so a demo
-  # shows the boot). Capture the serial to confirm the contract.
-  local serial rc
-  serial="$(ANDROID_AVD_HOME="$avd_home" "$(_pool_env_up)" --spec "$spec" --port "$port" "$@")"
+  # shows the boot). Capture the serial to confirm the contract, and have env-up report the
+  # profile it actually resolved (spec default, or an override in "$@") to a sidecar file the
+  # slot dir owns — so we record the *real* launch profile without parsing env-up's stdout.
+  local serial rc profile_out profile
+  profile_out="$slotdir/env-up.profile"
+  serial="$(ANDROID_AVD_HOME="$avd_home" ENVUP_PROFILE_OUT="$profile_out" \
+            "$(_pool_env_up)" --spec "$spec" --port "$port" "$@")"
   rc=$?
   if [ "$rc" -ne 0 ] || [ -z "$serial" ]; then
     echo "pool: bring-up failed for $spec on port $port (env-up rc=$rc) — reclaiming slot" >&2
@@ -185,7 +192,9 @@ pool_acquire() {
     return 5
   fi
 
+  profile="$(cat "$profile_out" 2>/dev/null)"; rm -f "$profile_out"
   pool_slot_set "$port" serial "$serial"
+  pool_slot_set "$port" profile "$profile"
   pool_slot_set "$port" status in-use
   pool_contract "$port"
 }
@@ -239,12 +248,13 @@ pool_status() {
   local cap count port
   cap="$(pool_cap)"; count="$(pool_count)"
   printf 'pool: %s/%s in use (POOL_DIR=%s)\n' "$count" "$cap" "$(pool_dir)"
-  printf '  %-16s %-8s %-8s %-10s %s\n' SERIAL CONSOLE ADB STATUS SPEC
+  printf '  %-16s %-8s %-8s %-10s %-16s %s\n' SERIAL CONSOLE ADB STATUS PROFILE SPEC
   for port in $(pool_list); do
-    printf '  %-16s %-8s %-8s %-10s %s\n' \
+    printf '  %-16s %-8s %-8s %-10s %-16s %s\n' \
       "$(pool_slot_get "$port" serial)" "$port" \
       "$(pool_slot_get "$port" adb_port)" \
       "$(pool_slot_get "$port" status)" \
+      "$(pool_slot_get "$port" profile)" \
       "$(pool_slot_get "$port" spec)"
   done
 }

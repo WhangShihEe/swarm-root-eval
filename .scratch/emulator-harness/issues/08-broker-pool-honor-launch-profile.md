@@ -9,11 +9,11 @@ contract, `ping`, and `status`, so a client knows whether it was handed a writab
 
 **Blocked by:** 07.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `bin/broker start` with no flag grants writable-`/system` devices (because specs default to it and the broker honors the spec). The broker no longer refuses or force-downgrades the profile.
-- [ ] The pool engine records the effective launch profile per slot so `status` and the connection contract can report it. The default path forwards nothing special — `env-up` derives the profile from the spec it is already given.
-- [ ] `broker start --profile <p>` becomes an optional **override** applied to every grant, taking precedence over the spec (e.g. force Frida-only across a run for a lighter footprint); the override reaches `env-up` via the pool.
-- [ ] The connection contract, `ping`, and `status` report the **real** profile each device was brought up under (spec-resolved, or the override when one is set), not a fixed string.
-- [ ] The broker `demo` verifies a default-start acquire yields a writable-`/system` device (`/system` writable and frida up), and releases cleanly.
-- [ ] No Inspect import anywhere in the harness (the ticket-06 invariant still holds).
+- [x] `bin/broker start` with no flag grants writable-`/system` devices (because specs default to it and the broker honors the spec). The broker no longer refuses or force-downgrades the profile.
+- [x] The pool engine records the effective launch profile per slot so `status` and the connection contract can report it. The default path forwards nothing special — `env-up` derives the profile from the spec it is already given.
+- [x] `broker start --profile <p>` becomes an optional **override** applied to every grant, taking precedence over the spec (e.g. force Frida-only across a run for a lighter footprint); the override reaches `env-up` via the pool.
+- [x] The connection contract, `ping`, and `status` report the **real** profile each device was brought up under (spec-resolved, or the override when one is set), not a fixed string.
+- [x] The broker `demo` verifies a default-start acquire yields a writable-`/system` device (`/system` writable and frida up), and releases cleanly.
+- [x] No Inspect import anywhere in the harness (the ticket-06 invariant still holds).

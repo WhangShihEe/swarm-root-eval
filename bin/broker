@@ -13,8 +13,10 @@
 #   bin/broker stop
 #   bin/broker demo    --spec devices/rootbeer.yaml   # start, grant 2, release both, stop
 #
-# On `acquire` the broker prints a connection contract the client drives over adb itself:
-#   serial=emulator-5554 console_port=5554 adb_port=5555 profile=frida-only
+# A grant honors the spec's launch profile (writable-/system by default); `start --profile <p>`
+# is an optional override forced across every grant. On `acquire` the broker prints a connection
+# contract, carrying the REAL profile the device came up under, that the client drives over adb:
+#   serial=emulator-5554 console_port=5554 adb_port=5555 profile=writable-system
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,12 +26,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/_pool.sh"
 # shellcheck source=./_broker.sh
 . "$HERE/_broker.sh"
+# shellcheck source=./_spec.sh
+. "$HERE/_spec.sh"   # demo resolves the spec's profile to assert the grant honored it
 
 log()   { printf 'broker: %s\n' "$*" >&2; }
 usage() {
   cat >&2 <<'EOF'
 usage: broker <command> [args]
-  start [--profile <p>] [--foreground]   launch the standing broker (default profile frida-only)
+  start [--profile <p>] [--foreground]   launch the broker; grants honor each spec (writable-/system default). --profile forces one profile across every grant
   stop                                   stop it, reclaiming every device
   acquire --spec <yaml> [env-up args…]   grant one device; prints its connection contract
   release (--serial <s> | --port <p>)    release a device, freeing its slot
@@ -56,23 +60,36 @@ cmd="${1:-}"; shift 2>/dev/null || true
 
 case "$cmd" in
   start)
-    profile="$BROKER_DEFAULT_PROFILE"; foreground=0
+    # profile is an optional OVERRIDE; empty (no --profile) means "honor each spec's profile".
+    profile="$BROKER_PROFILE_OVERRIDE"; foreground=0
     while [ $# -gt 0 ]; do
       case "$1" in
-        --profile) profile=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
-        --profile=*) profile=${1#--profile=}; shift ;;
+        --profile)
+          # A present --profile must carry a value: an empty one is a typo, not "no override"
+          # (that is simply omitting the flag). Also keeps bash 3.2's shift-past-eol from looping.
+          profile=${2:-}
+          [ -n "$profile" ] || { log "--profile needs a value (frida-only|writable-system)"; usage; exit 2; }
+          shift $(( $# > 1 ? 2 : 1 )) ;;
+        --profile=*)
+          profile=${1#--profile=}
+          [ -n "$profile" ] || { log "--profile needs a value (frida-only|writable-system)"; usage; exit 2; }
+          shift ;;
         --foreground|--fg) foreground=1; shift ;;
         *) log "unknown argument: $1"; usage; exit 2 ;;
       esac
     done
-    # Fail fast on a bad/unwired profile before spawning; broker_serve re-checks authoritatively.
+    # An override, if given, must name a wired profile; empty is fine (no override). broker_serve
+    # re-checks authoritatively.
     broker_profile_gate "$profile" || exit 2
-    if broker_running; then log "already running (pid=$(broker_pid), profile=$(broker_current_profile))"; exit 0; fi
+    # Inline the policy label rather than call broker_policy_label: a just-spawned daemon may not
+    # have written its profile file yet, so derive it from the value we are about to pass along.
+    plabel="per-spec"; [ -n "$profile" ] && plabel="$profile"
+    if broker_running; then log "already running (pid=$(broker_pid), profile=$(broker_policy_label))"; exit 0; fi
     if [ "$foreground" -eq 1 ]; then
       exec "$0" __serve --profile "$profile"
     fi
     if _broker_spawn "$profile"; then
-      log "started (pid=$(broker_pid) profile=$profile) — log: $(broker_dir)/broker.log"
+      log "started (pid=$(broker_pid) profile=$plabel) — log: $(broker_dir)/broker.log"
     else
       log "failed to start — see $(broker_dir)/broker.log"; exit 1
     fi
@@ -81,7 +98,7 @@ case "$cmd" in
   # Hidden: the daemon body. `start` re-execs this so the serving process is a clean child
   # that writes its own pidfile. Not part of the public CLI.
   __serve)
-    profile="$BROKER_DEFAULT_PROFILE"
+    profile="$BROKER_PROFILE_OVERRIDE"
     while [ $# -gt 0 ]; do
       case "$1" in
         --profile) profile=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
@@ -166,8 +183,8 @@ case "$cmd" in
     [ -n "$spec" ] || { log "demo needs --spec <yaml>"; usage; exit 2; }
 
     if broker_running; then log "demo: a broker is already running — stop it first: bin/broker stop"; exit 1; fi
-    log "demo: starting broker (profile=$BROKER_DEFAULT_PROFILE, cap=$(pool_cap))"
-    _broker_spawn "$BROKER_DEFAULT_PROFILE" || { log "demo: broker failed to start — see $(broker_dir)/broker.log"; exit 1; }
+    log "demo: starting broker (profile=per-spec — honoring the spec, cap=$(pool_cap))"
+    _broker_spawn "$BROKER_PROFILE_OVERRIDE" || { log "demo: broker failed to start — see $(broker_dir)/broker.log"; exit 1; }
     # Always stop the broker (which reclaims every device) on the way out, however we leave.
     trap '"$0" stop >/dev/null 2>&1 || true' EXIT
 
@@ -178,6 +195,27 @@ case "$cmd" in
     s2="${c2#serial=}"; s2="${s2%% *}"
     printf 'granted:\n  %s\n  %s\n' "$c1" "$c2"
     printf 'adb serials: %s  %s\n' "$s1" "$s2"
+
+    # ticket 08: a default start honors the spec, so the first grant should be a writable-/system
+    # device. Prove it under the profile the contract actually reports (spec-resolved) with the
+    # same checks bin/verify runs — /system genuinely writable + frida up on writable-/system.
+    # The grant must HONOR THE SPEC: derive the profile the spec resolves to and assert the
+    # device came up under exactly that — a default start silently downgrading to frida-only
+    # would otherwise slip through green (ticket 08 AC5). For rootbeer.yaml the expected profile
+    # is writable-/system (no writable_system key ⇒ true).
+    spec_load "$spec" >/dev/null 2>&1 || true
+    if [ "${SPEC_WRITABLE_SYSTEM:-true}" = true ]; then expected=writable-system; else expected=frida-only; fi
+    p1="${c1##* profile=}"; p1="${p1%% *}"
+    printf 'launch profile (device 1): %s (spec resolves to %s)\n' "$p1" "$expected"
+    if [ "$p1" != "$expected" ]; then
+      log "demo: FAIL — device came up '$p1' but the spec resolves to '$expected' (the grant did not honor the spec)"; exit 1
+    fi
+    log "demo: verifying $s1 came up under '$p1' (frida up; /system writable on writable-/system)…"
+    if "$HERE/verify" --serial "$s1" --spec "$spec" --profile "$p1" >&2; then
+      log "demo: verify OK — $s1 is a '$p1' device honoring the spec"
+    else
+      log "demo: verify FAILED for $s1 (profile=$p1)"; exit 1
+    fi
 
     log "demo: releasing both"
     broker_request release "$s1" >/dev/null || log "demo: release $s1 reported an error"
