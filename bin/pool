@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# pool — CLI over the ticket-05 pool engine (bin/_pool.sh): acquire/release/status a small
+# set of provisioned emulators on distinct ports. No standing service (that is the ticket-06
+# broker) — every subcommand is a one-shot against the file-backed registry under POOL_DIR.
+#
+#   bin/pool acquire --spec devices/rootbeer.yaml [--target-apk <apk>] [--window]
+#   bin/pool status
+#   bin/pool release --serial emulator-5554        # or --port 5554
+#   bin/pool down-all
+#   bin/pool demo    --spec devices/rootbeer.yaml   # acquire 2, print serials, release both
+#
+# Cap is POOL_CAP (default 3); state lives under POOL_DIR (default <repo>/.pool).
+set -uo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./env.sh
+. "$HERE/env.sh"
+# shellcheck source=./_pool.sh
+. "$HERE/_pool.sh"
+
+log()   { printf 'pool: %s\n' "$*" >&2; }
+usage() {
+  cat >&2 <<'EOF'
+usage: pool <command> [args]
+  acquire --spec <yaml> [env-up args…]   bring up one device; prints its connection contract
+  release (--serial <s> | --port <p>)    tear one device down, freeing its slot
+  status                                 show the registry (serial / ports / status / spec)
+  list                                   print the in-use console ports, one per line
+  down-all                               tear every device down (registry ends clean)
+  demo --spec <yaml>                     acquire 2, print serials, release both, show clean
+EOF
+}
+
+cmd="${1:-}"; shift 2>/dev/null || true
+
+case "$cmd" in
+  acquire)
+    spec= ; rest=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --spec) spec=${2:-}; shift 2 ;;
+        --spec=*) spec=${1#--spec=}; shift ;;
+        *) rest+=("$1"); shift ;;      # everything else passes through to env-up
+      esac
+    done
+    [ -n "$spec" ] || { log "acquire needs --spec <yaml>"; usage; exit 2; }
+    # ${rest[@]+…} guard: on macOS bash 3.2, a bare "${rest[@]}" for an empty array is an
+    # "unbound variable" error under `set -u`.
+    pool_acquire "$spec" ${rest[@]+"${rest[@]}"}
+    ;;
+
+  release)
+    id=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --serial) id=${2:-}; shift 2 ;;
+        --serial=*) id=${1#--serial=}; shift ;;
+        --port) id=${2:-}; shift 2 ;;
+        --port=*) id=${1#--port=}; shift ;;
+        *) log "unknown argument: $1"; usage; exit 2 ;;
+      esac
+    done
+    [ -n "$id" ] || { log "release needs --serial <s> or --port <p>"; usage; exit 2; }
+    pool_release "$id" && log "released $id"
+    ;;
+
+  status)   pool_status ;;
+  list)     pool_list ;;
+  down-all) pool_teardown_all && log "pool torn down — registry clean" ;;
+
+  demo)
+    spec=
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --spec) spec=${2:-}; shift 2 ;;
+        --spec=*) spec=${1#--spec=}; shift ;;
+        *) log "unknown argument: $1"; usage; exit 2 ;;
+      esac
+    done
+    [ -n "$spec" ] || { log "demo needs --spec <yaml>"; usage; exit 2; }
+    log "demo: acquiring 2 devices from $spec (cap=$(pool_cap))"
+    c1="$(pool_acquire "$spec")" || { log "demo: first acquire failed"; exit 1; }
+    c2="$(pool_acquire "$spec")" || { log "demo: second acquire failed"; pool_teardown_all; exit 1; }
+    # The two adb serials the demo is meant to print.
+    s1="${c1#serial=}"; s1="${s1%% *}"
+    s2="${c2#serial=}"; s2="${s2%% *}"
+    printf 'acquired:\n  %s\n  %s\n' "$c1" "$c2"
+    printf 'adb serials: %s  %s\n' "$s1" "$s2"
+    log "demo: releasing both"
+    # Release BOTH unconditionally — a && here would leak the second device if the first
+    # teardown reported an error.
+    pool_release "$s1" || log "demo: release $s1 reported an error"
+    pool_release "$s2" || log "demo: release $s2 reported an error"
+    n="$(pool_count)"
+    if [ "$n" -eq 0 ]; then
+      log "demo: registry clean (0 slots) — OK"
+    else
+      log "demo: registry NOT clean ($n slots remain)"; pool_status; exit 1
+    fi
+    ;;
+
+  ''|-h|--help) usage; [ -z "$cmd" ] && exit 2 || exit 0 ;;
+  *) log "unknown command: $cmd"; usage; exit 2 ;;
+esac

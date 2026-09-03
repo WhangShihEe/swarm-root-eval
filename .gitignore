@@ -1,2 +1,6 @@
 # Local APK corpus for the harness — large, app-owned binaries, never committed.
 /apks/
+
+# Pool engine runtime state — registry + per-slot AVD homes (ticket 05). Machine-local,
+# rebuilt from scratch on every acquire; never committed. Override with POOL_DIR.
+/.pool/
