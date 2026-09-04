@@ -1,0 +1,19 @@
+[project]
+name = "swarm-eval"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "whangshihee", email = "whangse123@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    # Pinned floor; uv.lock holds the exact resolved version. Held stable so a model
+    # sweep varies only the served model, never the harness under it (spec S2).
+    "inspect-ai>=0.3.263",
+]
+
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
