@@ -96,8 +96,16 @@ def self_report():
     return score
 
 
+# Fail-fast wall-clock budget for one sample (ticket 07). A hung or empty provider (e.g. a
+# sweep model returning empty turns) otherwise pins the scarce broker device through the whole
+# retry sequence; when this trips, the sample errors and `release_device` (cleanup) still runs,
+# freeing the slot. Wall-clock (not working-time) so a silent stall trips it too. Generous by
+# default for a real human-in-the-loop iteration; lower it for an unattended sweep.
+DEFAULT_TIME_LIMIT = 1800
+
+
 @task
-def dynamic_agent(spec: str = DEFAULT_SPEC):
+def dynamic_agent(spec: str = DEFAULT_SPEC, time_limit: int = DEFAULT_TIME_LIMIT):
     return Task(
         dataset=MemoryDataset([
             Sample(
@@ -117,6 +125,9 @@ def dynamic_agent(spec: str = DEFAULT_SPEC):
         ),
         cleanup=release_device,
         scorer=self_report(),
+        # Fail-fast: bound the sample so a hung/empty provider releases the broker device
+        # (cleanup runs on the limit-error) instead of pinning it through the retry sequence.
+        time_limit=time_limit,
         # Host-network sandbox (compose.yaml adds host.docker.internal, no network_mode:none)
         # so the sandboxed adb can reach the host emulator.
         sandbox=("docker", str(Path(__file__).resolve().parent / "compose.yaml")),

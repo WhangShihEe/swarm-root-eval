@@ -82,6 +82,13 @@ async def test_self_report_scorer_greens_on_success_matching_target():
     assert s.answer == "SUCCESS"
 
 
+def test_task_carries_fail_fast_time_limit():
+    # Ticket 07 fail-fast: the task is bounded so a hung provider releases the broker device
+    # (cleanup runs on the limit-error) rather than pinning it. Default applied, and overridable.
+    assert da.dynamic_agent().time_limit == da.DEFAULT_TIME_LIMIT
+    assert da.dynamic_agent(time_limit=300).time_limit == 300
+
+
 @pytest.mark.asyncio
 async def test_self_report_scorer_reds_on_failure_and_on_missing_verdict():
     from inspect_ai.scorer import INCORRECT, Target

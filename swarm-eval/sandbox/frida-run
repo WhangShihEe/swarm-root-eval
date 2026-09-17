@@ -1,0 +1,108 @@
+#!/opt/frida/bin/python3
+"""Non-interactive frida runner (ticket 07).
+
+`frida -l agent.js` drops into an interactive REPL and never exits, so the bridged agent
+SIGTERMs it and inherits rc 143 — a hung tool, not a result. This runner instead attaches (or
+spawns), loads a *compiled* agent, and **exits on its own**: on a completion signal from the
+agent, on an agent error, or on a timeout. It is the scriptable counterpart to objection's
+fast path.
+
+Reaches the device the same way the connect helper does — over the adb-forwarded tunnel, which
+frida sees as a USB device (`-U`). Run `/root/connect-device.sh` first.
+
+Completion protocol (agent -> runner):
+    send({ type: 'done', ok: true })    # end the session, exit 0
+    send({ type: 'done', ok: false })   # end the session, exit 2 (agent reports it failed)
+Any other `send(...)` payload is printed. An uncaught agent exception (frida 'error' message)
+exits 3. No completion signal before the timeout exits 124 (matching coreutils `timeout`).
+
+Examples:
+    frida-run -f com.example.app -l agent.compiled.js -t 30      # spawn, resume, run 30s
+    frida-run -a com.example.app -l agent.compiled.js            # attach to a running app
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+
+import frida
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="frida-run",
+        description="Attach/spawn, load a compiled frida agent, and exit (no REPL).",
+    )
+    p.add_argument("-l", "--script", required=True, help="path to the (compiled) agent .js")
+    target = p.add_mutually_exclusive_group(required=True)
+    target.add_argument("-a", "--attach", metavar="NAME|PID",
+                        help="attach to an already-running process (name or pid)")
+    target.add_argument("-f", "--spawn", metavar="PACKAGE",
+                        help="spawn a package/binary, load the agent, then resume it")
+    p.add_argument("-t", "--timeout", type=float, default=60.0,
+                   help="seconds to wait for a completion signal before giving up (default 60)")
+    p.add_argument("--device-timeout", type=float, default=15.0,
+                   help="seconds to wait for the USB/adb-tunnel device (default 15)")
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
+
+    device = frida.get_usb_device(timeout=args.device_timeout)
+
+    outcome: dict[str, int | None] = {"code": None}
+
+    def on_message(message: dict, data: object) -> None:
+        if message.get("type") == "send":
+            payload = message.get("payload")
+            if isinstance(payload, dict) and payload.get("type") == "done":
+                ok = bool(payload.get("ok", True))
+                print(f"[frida-run] done ok={ok} payload={payload}")
+                outcome["code"] = 0 if ok else 2
+                return
+            print(f"[frida-run] {payload}")
+        elif message.get("type") == "error":
+            print(f"[frida-run] agent error: {message.get('description')}", file=sys.stderr)
+            stack = message.get("stack")
+            if stack:
+                print(stack, file=sys.stderr)
+            outcome["code"] = 3
+
+    pid = None
+    if args.spawn is not None:
+        pid = device.spawn(args.spawn)
+        session = device.attach(pid)
+    else:
+        target: object = int(args.attach) if args.attach.isdigit() else args.attach
+        session = device.attach(target)
+
+    with open(args.script, "r", encoding="utf-8") as fh:
+        source = fh.read()
+    script = session.create_script(source)
+    script.on("message", on_message)
+    script.load()
+    if pid is not None:
+        device.resume(pid)
+
+    deadline = time.time() + args.timeout
+    while outcome["code"] is None and time.time() < deadline:
+        time.sleep(0.1)
+
+    for teardown in (script.unload, session.detach):
+        try:
+            teardown()
+        except Exception:  # noqa: BLE001 — teardown is best-effort; the exit code is the result
+            pass
+
+    if outcome["code"] is None:
+        print(f"[frida-run] timeout after {args.timeout}s with no completion signal",
+              file=sys.stderr)
+        return 124
+    return int(outcome["code"])
+
+
+if __name__ == "__main__":
+    sys.exit(main())
