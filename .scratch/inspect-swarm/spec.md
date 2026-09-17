@@ -28,10 +28,15 @@ cross-run scoring) is **entirely external** to Inspect — Inspect has no cross-
   Proves Inspect task → `sandbox_agent_bridge()` (via `inspect_swe.claude_code()`) → CC →
   completion → scorer → transcript.
 - **03 — Orchestrator smoke (SUPERSEDED).** Fork A; abandoned over the interleaving above.
-- **04 — Dynamic agent, end-to-end (ready, do first).** One bridged CC agent in a sandbox with
-  the Android offensive toolchain, handed a **broker-granted device**, reaching it over adb,
-  working the **RootBeer** APK. Self-report oracle. Combines the agent with its device-linking
-  infra (can't prove one without the other). **The reusable unit ticket 05 launches N times.**
+- **04 — Dynamic agent, end-to-end (done at infra level, a4d6cfb).** One bridged CC agent in a
+  sandbox, handed a **broker-granted device**, reaching it over adb, working the **RootBeer**
+  APK. Acquire/inject/connect/adb/frida-handshake all verified live. **The reusable unit ticket
+  05 launches N times.**
+- **07 — Dynamic-agent offensive-tooling layer (ready, human-in-the-loop).** Makes frida-17
+  usable (Java bridge + `frida-compile` + non-interactive runner + objection), folds static
+  tools into the image, rewrites the prompt, adds a fail-fast limit — and **iterates to a first
+  RootBeer green on Claude**. With 06, unlocks the sweep. (Logically 04.5; the agent-effectiveness
+  follow-on.)
 - **05a — Messageboard (ready).** Host-side append-only one-file-per-message board +
   `bridged_tools` (`post_message`/`list_messages`/`read_message`). The comms substrate;
   provable with two hand-started runs. Independent of 04.
@@ -115,6 +120,19 @@ cross-run scoring) is **entirely external** to Inspect — Inspect has no cross-
   `done`-poll + per-run Inspect limit + launcher-kill; logs + saved board collated under
   `logs/<swarm-id>/`. `N=1-is-single`, uniform path.
 
+### Ticket 07 (dynamic-agent offensive tooling) — grilled & settled, folded into the ticket
+- frida-17 usable: `frida-java-bridge` + `frida-compile` (custom scripts) **and** objection
+  (works-today fast path) **and** a non-interactive runner; static tools added to the dynamic
+  image (jadx/apktool/aapt/…); prompt rewritten; fail-fast `time_limit`. First green on **Claude**,
+  human-in-the-loop; empirical acceptance (iteration log + green transcript).
+
 ### Ticket 06 (machine-checkable oracle) — future, grill before building
 - Replace self-report with an independent RootBeer signal (logcat/state) per a per-app manifest;
   plugs into the arbiter without changing termination wiring. **Gates the model sweep.**
+
+### Model sweep — prerequisites parked
+- **Reasoning-model output filter** (strip leaked `<think>…</think>` / `</think>` spam so a
+  verdict is emitted) — a bridge filter alongside `swarm_eval/model_filters.py`. Needed for
+  cross-vendor reasoning models (Qwen). Sweep also needs a first green (07) + a machine-checkable
+  oracle (06). Cross-vendor provider caveat: prefer `cerebras`/`novita` over `deepinfra` for Qwen
+  (malformed tool-call streams).
