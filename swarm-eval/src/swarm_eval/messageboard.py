@@ -24,10 +24,17 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-# The message taxonomy. `done` is reserved for the arbiter (05b) — the board accepts it (the
-# arbiter posts through the same substrate), but the worker-facing `post_message` tool forbids
-# it so a worker can't fake termination. See `board_tools.py`.
-MESSAGE_TYPES = ("note", "finding", "success", "giveup", "done")
+# The message taxonomy — named so downstream (the 05b arbiter rubric) matches on these tokens
+# by constant, not by re-typing the string (one taxonomy change here reaches every reader).
+# `done` is reserved for the arbiter (05b) — the board accepts it (the arbiter posts through the
+# same substrate), but the worker-facing `post_message` tool forbids it so a worker can't fake
+# termination. See `board_tools.py`.
+TYPE_NOTE = "note"
+TYPE_FINDING = "finding"
+TYPE_SUCCESS = "success"
+TYPE_GIVEUP = "giveup"
+TYPE_DONE = "done"
+MESSAGE_TYPES = (TYPE_NOTE, TYPE_FINDING, TYPE_SUCCESS, TYPE_GIVEUP, TYPE_DONE)
 
 # Env vars the launcher (05b) injects per run; `from_env` reads them to locate the board.
 ENV_BOARD_DIR = "BOARD_DIR"

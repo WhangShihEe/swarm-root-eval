@@ -84,9 +84,10 @@ the term as defined here; don't drift to synonyms. Decisions that shaped these l
   (host-side tools over MCP), not Inspect's per-sample `store`.
 - **Arbiter** — a dedicated agent-run that watches the messageboard, decides the mission is
   **done**, and issues the verdict. The swarm **oracle** for now.
-- **Launcher** — the external conductor (outside Inspect): starts the N agent-runs, creates the
-  messageboard, links broker devices into runs that need them, and correlates the per-run logs
-  under one **swarm-id**.
+- **Launcher** (a.k.a. the **Conductor** — the `Conductor` class in `swarm-eval`'s
+  `conductor.py`, ticket 05b) — the external orchestrator (outside Inspect): starts the N
+  agent-runs, creates the messageboard, links broker devices into runs that need them, applies
+  the arbiter rubric, and correlates the per-run logs under one **swarm-id**.
 - **Oracle** — the success check. MVP = agent **self-report** (read off the board by the
   arbiter) + manual verification; the real oracle is a per-app **manifest** declaring a concrete,
   machine-checkable success signal (e.g. app reaches its post-root-check state, observed

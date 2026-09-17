@@ -47,6 +47,17 @@ class Contract:
     adb_port: int
     profile: str
 
+    def render_contract_line(self) -> str:
+        """The broker's own one-line contract format (`serial=… console_port=… adb_port=…
+        profile=…`). Symmetric with `parse_contract`: the launcher (05b) pre-acquires a device
+        and writes this to the file it injects as `DEVICE_CONTRACT`, and the worker parses it
+        back with `parse_contract`. Kept in the broker's format (not `render_env_file`'s
+        `DEVICE_*` shape) so the same parser reads a real grant and a launcher-relayed one."""
+        return (
+            f"serial={self.serial} console_port={self.console_port} "
+            f"adb_port={self.adb_port} profile={self.profile}"
+        )
+
     def render_env_file(self) -> str:
         """A `source`-able shell fragment injected into the sandbox as the contract of record."""
         return (
