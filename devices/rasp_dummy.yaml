@@ -1,12 +1,12 @@
-# Device-spec: RootBeer sample (com.scottyab.rootbeer.sample) — the known anti-root sample,
-# first rung of the target ladder (CONTEXT.md). Single APK -> adb install -r.
-# The APK is NOT yet in the corpus: drop it at apks/rootbeer/rootbeer.apk (see below),
-# then this spec boots + provisions it exactly like the others.
-#   bin/env-up  --spec devices/rootbeer.yaml
-#   bin/verify  --spec devices/rootbeer.yaml
-#   bin/env-down --spec devices/rootbeer.yaml
+# Device-spec: RASP dummy target (com.example.rasptarget, label "RASP Target") — an owned
+# graded RASP/anti-tamper target (dummy-apks corpus). Single self-contained APK -> adb install -r.
+# Main activity: com.example.rasptarget.MainActivity (min sdk 24, target sdk 34).
+# The APK lives in the untracked in-project corpus at apks/rasp_dummy/rasp_dummy.apk.
+#   bin/env-up  --spec devices/rasp_dummy.yaml
+#   bin/verify  --spec devices/rasp_dummy.yaml
+#   bin/env-down --spec devices/rasp_dummy.yaml
 
-name: rootbeer                  # AVD name + adb tag
+name: rasp_dummy                # AVD name + adb tag
 device_profile: pixel           # avdmanager -d <profile>
 system_image: "system-images;android-37.1;google_apis_ps16k;arm64-v8a"
 api: "37.1"                     # env-up asserts config.ini target == android-37.1
@@ -18,7 +18,7 @@ data_size_mb: 8192              # disk.dataPartition.size
 # --- ticket 04: provisioning ---
 # APK lives in the untracked in-project corpus (apks/, gitignored). Path is repo-relative;
 # env-up/bin/verify resolve it against CWD then the repo root (apk_resolve_path).
-target_apk: "apks/rootbeer/rootbeer.apk"
+target_apk: "apks/rasp_dummy/rasp_dummy.apk"
 provision: true
 frida: true
 normalize_settings: true

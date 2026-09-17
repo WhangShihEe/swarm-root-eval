@@ -91,5 +91,5 @@ human-in-the-loop part — fill this log as you iterate.
 - What the agent did: <static recon → objection/frida path>
 - What broke: <error / hang / wrong hook / verdict missing>
 - What changed: <prompt tweak / tool fix / image rebuild>
-- Verdict: ROOTBEER_BYPASS: SUCCESS|FAILURE  (log: logs/<...>.eval)
+- Verdict: RASP_BYPASS: SUCCESS|FAILURE  (log: logs/<...>.eval)
 ```

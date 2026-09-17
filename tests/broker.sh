@@ -50,7 +50,7 @@ export POOL_ENV_UP="$FAKEBIN/env-up" POOL_ENV_DOWN="$FAKEBIN/env-down"
 # shellcheck source=/dev/null
 . "$ROOT/bin/_broker.sh"
 
-SPEC="$ROOT/devices/rootbeer.yaml"   # any path; the fake env-up never reads it
+SPEC="$ROOT/devices/rasp_dummy.yaml"   # any path; the fake env-up never reads it
 reset() { rm -rf "$POOL_DIR" "$BROKER_DIR"; }
 
 # with_timeout SECS cmd… — run cmd with a watchdog (macOS has no `timeout(1)`). Returns the

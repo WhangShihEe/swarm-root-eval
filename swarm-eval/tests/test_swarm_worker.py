@@ -56,7 +56,7 @@ def test_swarm_mode_is_off_by_default_and_on_with_device_contract(monkeypatch, t
 def test_obtain_contract_standalone_acquires_and_owns_the_lease(monkeypatch):
     monkeypatch.setattr(da, "acquire", lambda spec: CONTRACT)
     state = _state()
-    got = da._obtain_contract("devices/rootbeer.yaml", state)
+    got = da._obtain_contract("devices/rasp_dummy.yaml", state)
     assert got == CONTRACT
     assert state.metadata["device_owner"] == da.OWNER_SOLVER
 
@@ -71,7 +71,7 @@ def test_obtain_contract_swarm_reads_injected_file_and_does_not_acquire(monkeypa
 
     monkeypatch.setattr(da, "acquire", _boom)
     state = _state()
-    got = da._obtain_contract("devices/rootbeer.yaml", state)
+    got = da._obtain_contract("devices/rasp_dummy.yaml", state)
     assert got == CONTRACT
     assert state.metadata["device_owner"] == da.OWNER_LAUNCHER
 
@@ -88,7 +88,7 @@ async def test_acquire_device_swarm_injects_contract_without_acquiring(monkeypat
     monkeypatch.setattr(da, "sandbox", lambda: sbx)
 
     state = _state()
-    await da.acquire_device("devices/rootbeer.yaml")(state, generate=None)
+    await da.acquire_device("devices/rasp_dummy.yaml")(state, generate=None)
 
     assert state.metadata["device"]["serial"] == "emulator-5554"
     assert "DEVICE_ADB_PORT=5555" in sbx.files[da.CONTRACT_PATH]

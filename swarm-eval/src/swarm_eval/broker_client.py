@@ -28,8 +28,8 @@ ADB_HOST = "host.docker.internal"
 # is pinned to this; a client/server mismatch is a classic silent failure.
 FRIDA_VERSION = "17.17.0"
 
-# Default device-spec — RootBeer, the first rung of the target ladder.
-DEFAULT_SPEC = "devices/rootbeer.yaml"
+# Default device-spec — the RASP dummy target (owned graded RASP/anti-tamper app).
+DEFAULT_SPEC = "devices/rasp_dummy.yaml"
 
 
 class BrokerError(RuntimeError):

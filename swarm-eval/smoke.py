@@ -21,7 +21,7 @@ from inspect_ai.tool import ToolChoice, ToolInfo
 from inspect_swe import claude_code
 
 TOKEN = "yes"
-APK = str(Path(__file__).resolve().parent.parent / "apks" / "rootbeer" / "rootbeer.apk")
+APK = str(Path(__file__).resolve().parent.parent / "apks" / "rasp_dummy" / "rasp_dummy.apk")
 
 
 @task
@@ -32,7 +32,7 @@ def smoke():
                 input=f"If you see this message, first create 3 subagents. One should create a file which containes a poem. The other 2 should echos 'hello'. After all the finished, then submit '{TOKEN}'",
                 target=TOKEN,
                 # APK staged into the sandbox via the Sample's files (the delivery mechanism).
-                files={"rootbeer.apk": APK},
+                files={"rasp_dummy.apk": APK},
             )
         ]),
         solver=claude_code(model_config="claude-sonnet-4-5-20250929", filter=merge_system_messages),

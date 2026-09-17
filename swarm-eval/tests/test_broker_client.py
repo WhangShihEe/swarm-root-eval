@@ -82,7 +82,7 @@ def test_acquire_parses_contract_from_fake_broker(tmp_path, monkeypatch):
         'echo "broker: acquire"\n' f'echo "{CONTRACT_LINE}"\n' "exit 0\n",
     )
     monkeypatch.setenv("SWARM_BROKER_BIN", str(fake))
-    c = acquire(spec="devices/rootbeer.yaml")
+    c = acquire(spec="devices/rasp_dummy.yaml")
     assert c.serial == "emulator-5554"
     assert c.adb_port == 5555
 
@@ -91,7 +91,7 @@ def test_acquire_raises_on_broker_failure(tmp_path, monkeypatch):
     fake = _write_fake_broker(tmp_path, 'echo "broker: no capacity" >&2\nexit 1\n')
     monkeypatch.setenv("SWARM_BROKER_BIN", str(fake))
     with pytest.raises(BrokerError):
-        acquire(spec="devices/rootbeer.yaml")
+        acquire(spec="devices/rasp_dummy.yaml")
 
 
 def test_release_calls_broker_with_serial(tmp_path, monkeypatch):

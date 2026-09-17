@@ -4,8 +4,8 @@ from swarm_eval.mission import build_mission, extract_self_report, VERDICT_TOKEN
 
 
 def test_build_mission_mentions_apk_contract_and_toolchain():
-    m = build_mission(apk_name="rootbeer.apk", contract_path="/root/device-contract.env")
-    assert "rootbeer.apk" in m
+    m = build_mission(apk_name="rasp_dummy.apk", contract_path="/root/device-contract.env")
+    assert "rasp_dummy.apk" in m
     assert "/root/device-contract.env" in m
     # the agent must be pointed at the live-device data plane and the toolchain
     assert "adb" in m.lower()
@@ -17,7 +17,7 @@ def test_build_mission_mentions_apk_contract_and_toolchain():
 def test_build_mission_lists_exact_ticket07_toolchain():
     # Ticket 07: the prompt must NAME every baked tool (dynamic + static + the frida-17 bridge
     # workflow) and the non-interactive runner — not hand-wave "static tools may also be present".
-    m = build_mission(apk_name="rootbeer.apk", contract_path="/root/device-contract.env")
+    m = build_mission(apk_name="rasp_dummy.apk", contract_path="/root/device-contract.env")
     for tool in ("frida-compile", "frida-java-bridge", "frida-run", "objection",
                  "jadx", "apktool", "androguard"):
         assert tool in m, f"mission prompt should name {tool}"

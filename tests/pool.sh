@@ -64,7 +64,7 @@ export FAKE_DOWN_LOG="$POOL_ROOT/envdown.log"
 # shellcheck source=/dev/null
 . "$ROOT/bin/_pool.sh"
 
-SPEC="$ROOT/devices/rootbeer.yaml"   # any path; the fake env-up never reads it
+SPEC="$ROOT/devices/rasp_dummy.yaml"   # any path; the fake env-up never reads it
 
 reset_pool() { rm -rf "$POOL_DIR"; : > "$FAKE_LOG"; : > "$FAKE_STATUS"; : > "$FAKE_DOWN_LOG"; }
 

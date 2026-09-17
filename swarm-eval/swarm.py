@@ -8,7 +8,7 @@ host-side arbiter over the board, posts the `done` verdict, and collates everyth
     # single agent = the swarm at N=1 (uniform path, not special-cased)
     python swarm.py --workers 1
 
-    # a 3-agent swarm on the RootBeer mission, 20-min per-run cap, 45-min swarm budget
+    # a 3-agent swarm on the RASP-target mission, 20-min per-run cap, 45-min swarm budget
     python swarm.py --workers 3 --time-limit 1200 --budget 2700 \
         --model anthropic/claude-sonnet-4-5-20250929
 
@@ -60,7 +60,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="number of worker agents (N=1 is the single-agent case; default 1)")
     p.add_argument("--model", default=DEFAULT_MODEL,
                    help="served provider model the sandboxed CC proxies to (the sweep lever)")
-    p.add_argument("--spec", default=DEFAULT_SPEC, help="broker device spec (default rootbeer)")
+    p.add_argument("--spec", default=DEFAULT_SPEC, help="broker device spec (default rasp_dummy)")
     p.add_argument("--cap", type=int, default=DEFAULT_CAP,
                    help="max workers before fail-fast (mirrors the broker cap; default 3)")
     p.add_argument("--time-limit", type=int, default=None,

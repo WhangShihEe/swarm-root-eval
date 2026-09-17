@@ -78,7 +78,7 @@ DEFAULT_MODEL = "anthropic/claude-sonnet-4-5-20250929"
 DEFAULT_CAP = 3
 # Per-run wall-clock cap (seconds), so termination layer (b) — "no run loops forever" — holds
 # by default, not only when an operator remembers the flag. Generous for a real human-in-the-loop
-# RootBeer attempt yet under the launcher `budget` so a run can't outlive the swarm.
+# RASP-target attempt yet under the launcher `budget` so a run can't outlive the swarm.
 DEFAULT_TIME_LIMIT = 1800
 
 
