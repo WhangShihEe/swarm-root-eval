@@ -13,6 +13,7 @@ dependencies = [
     # sweep varies only the served model, never the harness under it (spec S2).
     "inspect-ai>=0.3.263",
     "inspect-swe==0.2.70",
+    "openai>=3.14.1",
 ]
 
 

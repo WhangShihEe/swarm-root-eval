@@ -8,26 +8,37 @@ are unchanged**. Proves the full path: bridge + CC + tool call + passive complet
 
 **Blocked by:** 01.
 
-**Status:** blocked
+**Status:** done
 
-- [ ] Solver = `inspect_swe.claude_code()` (bridge/sandbox delegated). Task, dataset, and
+- [x] Solver = `inspect_swe.claude_code()` (bridge/sandbox delegated). Task, dataset, and
       scorer from 01 are reused verbatim — only the solver changes. `inspect_swe` pinned.
-- [ ] Sandboxed CC runs **keyless** against `ANTHROPIC_BASE_URL=http://localhost:13131` with
+- [x] Sandboxed CC runs **keyless** against `ANTHROPIC_BASE_URL=http://localhost:13131` with
       `model="inspect"`; the **host-side** `inspect eval --model anthropic/claude-…` provider
       serves the real call (S2). No Anthropic key in the image.
-- [ ] Toy prompt → the agent **calls the submit tool** (or returns the token); the scorer
+- [x] Toy prompt → the agent **calls the submit tool** (or returns the token); the scorer
       greens; the transcript shows the model call(s) captured **passively**.
-- [ ] Completion works with no explicit "done": the agent runs to completion and the solver
+- [x] Completion works with no explicit "done": the agent runs to completion and the solver
       result comes from `bridge.state`; the final output reaches the scorer.
-- [ ] **Model sweep is a one-flag change** — re-run with a different `--model` and it still
+- [x] **Model sweep is a one-flag change** — re-run with a different `--model` and it still
       greens (a short demo/note is enough; the real sweep is gated on a first green later).
-- [ ] Sandbox/image sourcing confirmed against `inspect_swe` docs: does `claude_code()`
+- [x] Sandbox/image sourcing confirmed against `inspect_swe` docs: does `claude_code()`
       **provide** the CC sandbox/compose, or must we supply a Dockerfile/`compose.yaml`?
       Record the answer. Note the sandbox bridge **withholds** `web_search`/`code_execution`/
       `client_mcp_servers` by default (fine for smoke).
-- [ ] Harness still Inspect-free; broker untouched.
+- [x] Harness still Inspect-free; broker untouched.
 
 ## Notes
+- **Sandbox sourcing (answer):** `claude_code()` does **not** provide the CC sandbox/compose —
+  we supply our own. `swarm-eval/Dockerfile` bakes the native `claude` binary into
+  `debian-slim` (no Node); CC version is fixed by the image and paired with
+  `model_config="claude-sonnet-4-5-…"` so CC's own model-name check passes while the bridge
+  serves whatever `--model` selects. The bridge withholds `web_search`/`code_execution`/
+  `client_mcp_servers` by default (fine for smoke). Caveat: the image build depends on a
+  gitignored corporate CA bundle (`certs/`), so it won't build in CI as-is.
+- **Cross-vendor note:** the smoke was greened against non-Anthropic served models (Kimi, Qwen)
+  in addition to Claude. This required a `merge_system_messages` filter (Qwen/Kimi want a single
+  leading system message). That is arguably *model-sweep* scope, not plumbing — revisit whether
+  the filter belongs here or in the sweep feature.
 - This is the last purely-plumbing ticket. Once green, the bridge is trusted and grilling
   resumes for the orchestrator slice (ticket 03).
 - Ref: https://meridianlabs-ai.github.io/inspect_swe/claude_code.html ,

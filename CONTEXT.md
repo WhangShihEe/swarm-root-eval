@@ -22,7 +22,11 @@ the term as defined here; don't drift to synonyms. Decisions that shaped these l
 
 ## Agents
 
-- **Swarm** — an **orchestrator** plus N bridged Claude Code **workers**.
+- **Swarm** — N bridged Claude Code **agent-runs** collaborating through a shared
+  **messageboard**, with a separate **arbiter** run judging completion, all started and wired by
+  an external **launcher**. **No central orchestrator** (see ADR-0002): each agent is its own
+  Inspect run (one run = one bridge = one clean transcript). **N=1-is-single** — one run, a
+  one-participant board.
 - **Static agent** — has the APK and static tools (jadx / apktool); no emulator. Cheap,
   effectively unbounded in count.
 - **Dynamic agent** — static tools **plus** a broker-granted emulator and frida. Scarce,
@@ -42,7 +46,9 @@ the term as defined here; don't drift to synonyms. Decisions that shaped these l
   the agent then runs frida / objection / adb-shell itself. Not a gesture (screenshot/tap) API.
 - **Provisioning** — taking a booted device to **t=0**: root shell, frida-server (pinned
   **v17.17.0**), APK install (package + launch activity via `apkanalyzer manifest`), normalized
-  settings. Writes only to `/data` — **never `/system`**.
+  settings. Provisioning itself writes only to `/data`; modifying `/system` is the separate
+  **writable-`/system` launch profile** step (disable-verity + remount), not provisioning —
+  under the Frida-only profile `/system` stays untouched.
 - **Device-spec** — the declarative YAML (`devices/pixel-a37.yaml`) that drives the device
   layer, parsed with **`yq`** (a pinned harness dependency).
 - **Reset = full rebuild** — every bring-up and every reset is create → cold boot → provision
@@ -66,11 +72,22 @@ the term as defined here; don't drift to synonyms. Decisions that shaped these l
 
 - **Inspect** — used as the eval framework only (run / log / score). Kept separate from the
   harness; no Inspect import in harness code.
-- **Inspect bridge** — `sandbox_agent_bridge()`: a proxy inside the sandbox
-  (`ANTHROPIC_BASE_URL=http://localhost:13131`) relaying model calls to Inspect's current
-  provider. Inspect logs the transcript **passively**; the agent runs its own loop and signals
-  completion by **returning**. Model sweep = swap the served model (`inspect/<provider>/<model>`),
-  agent code unchanged.
-- **Oracle** — the success check. MVP = agent **self-report** + manual verification; the real
-  oracle is a per-app **manifest** declaring a concrete, machine-checkable success signal
-  (e.g. app reaches its post-root-check state, observed independently from logcat/state).
+- **Inspect bridge** — `sandbox_agent_bridge()` (via `inspect_swe.claude_code()`): a proxy
+  inside the sandbox (`ANTHROPIC_BASE_URL=http://localhost:13131`) relaying model calls to
+  Inspect's current provider. Inspect logs the transcript **passively**; the agent runs its own
+  loop and signals completion by **returning**. Model sweep = swap the served model
+  (`inspect/<provider>/<model>`), agent code unchanged. **One agent per run** — concurrent
+  in-process subagents collapse onto the parent transcript span, so the swarm uses separate
+  runs instead (ADR-0002).
+- **Messageboard** — the swarm's shared state: a **host-side, append-only, one-file-per-message
+  directory** (the broker's queue idiom). Agents post/read via `inspect_swe` **`bridged_tools`**
+  (host-side tools over MCP), not Inspect's per-sample `store`.
+- **Arbiter** — a dedicated agent-run that watches the messageboard, decides the mission is
+  **done**, and issues the verdict. The swarm **oracle** for now.
+- **Launcher** — the external conductor (outside Inspect): starts the N agent-runs, creates the
+  messageboard, links broker devices into runs that need them, and correlates the per-run logs
+  under one **swarm-id**.
+- **Oracle** — the success check. MVP = agent **self-report** (read off the board by the
+  arbiter) + manual verification; the real oracle is a per-app **manifest** declaring a concrete,
+  machine-checkable success signal (e.g. app reaches its post-root-check state, observed
+  independently from logcat/state).

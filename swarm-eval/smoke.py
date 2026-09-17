@@ -1,6 +1,7 @@
-"""Ticket 01 smoke: prove the Inspect wiring — task / dataset / scorer / logging —
-with a MOCK solver (no model, no bridge, no emulator). The scorer greens on BOTH
-S1 completion paths: a submit-style tool call, and a plain final-message match."""
+"""Ticket 02 smoke: prove the full bridged path — task / dataset / scorer / logging with a
+REAL Claude Code agent over sandbox_agent_bridge() (via inspect_swe.claude_code()), keyless
+in the sandbox. The scorer greens on BOTH S1 completion paths: a submit-style tool call, and
+a plain final-message match."""
 
 from pathlib import Path
 
@@ -11,6 +12,13 @@ from inspect_ai.tool import ToolCall
 from inspect_ai.solver import solver, TaskState, Generate
 from inspect_ai.scorer import scorer, Score, Target, accuracy, stderr, CORRECT, INCORRECT
 from inspect_ai.util import sandbox
+from inspect_swe import claude_code
+from inspect_ai.model import (
+    ChatMessage, ChatMessageSystem, GenerateConfig, GenerateInput,
+    Model, ModelOutput,
+)
+from inspect_ai.tool import ToolChoice, ToolInfo
+from inspect_swe import claude_code
 
 TOKEN = "yes"
 APK = str(Path(__file__).resolve().parent.parent / "apks" / "rootbeer" / "rootbeer.apk")
@@ -21,41 +29,33 @@ def smoke():
     return Task(
         dataset=MemoryDataset([
             Sample(
-                input=f"If you see this message, submit '{TOKEN}'",
+                input=f"If you see this message, first create 3 subagents. One should create a file which containes a poem. The other 2 should echos 'hello'. After all the finished, then submit '{TOKEN}'",
                 target=TOKEN,
                 # APK staged into the sandbox via the Sample's files (the delivery mechanism).
                 files={"rootbeer.apk": APK},
             )
         ]),
-        solver=mock_answer(),
+        solver=claude_code(model_config="claude-sonnet-4-5-20250929", filter=merge_system_messages),
         scorer=token_present(),
-        sandbox="local",
+        sandbox="docker",
     )
 
-
-@solver
-def mock_answer():
-    """Stand-in for ticket 02's bridged agent. Deterministically leaves the token in
-    BOTH places a real agent might: the final completion, and a submit tool call."""
-    async def solve(state: TaskState, generate: Generate) -> TaskState:
-        # path (b): final-message match — the token is the completion text.
-        state.output = ModelOutput.from_content(model="mock/mock", content=TOKEN)
-        # path (a): submit-style tool call — what a real agent emits to finish.
-        state.messages.append(
-            ChatMessageAssistant(
-                content="",
-                tool_calls=[ToolCall(id="submit-1", function="submit",
-                                     arguments={"answer": TOKEN})],
-            )
-        )
-        # Criterion 5: confirm the APK was staged into the sandbox. Read as BYTES
-        # (text=True would try to UTF-8-decode the binary zip and blow up), and assert
-        # the zip magic so we prove it's really the APK, not just some file.
-        apk = await sandbox().read_file("rootbeer.apk", text=False)
-        assert apk[:2] == b"PK", "staged file is not a zip/APK"
-        return state
-    return solve
-
+async def merge_system_messages(
+    model: Model,
+    messages: list[ChatMessage],
+    tools: list[ToolInfo],
+    tool_choice: ToolChoice | None,
+    config: GenerateConfig,
+) -> ModelOutput | GenerateInput | None:
+    system = [m for m in messages if isinstance(m, ChatMessageSystem)
+          and not m.text.startswith("x-anthropic-")]
+    if len(system) <= 1:
+        return None
+    merged = ChatMessageSystem(content="\n\n".join(m.text for m in system))
+    rest = [m for m in messages if not isinstance(m, ChatMessageSystem)]
+    return GenerateInput(
+        input=[merged, *rest], tools=tools, tool_choice=tool_choice, config=config
+    )
 
 @scorer(metrics=[accuracy(), stderr()])
 def token_present():

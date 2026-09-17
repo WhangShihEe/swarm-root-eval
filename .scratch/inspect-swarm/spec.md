@@ -1,106 +1,120 @@
 # inspect-swarm — the Inspect side of the house
 
-The **swarm** (orchestrator + N bridged Claude Code workers) run as an Inspect eval on top of
-the completed device layer (pool + broker). This is the feature CONTEXT.md calls the
-**Inspect layer**. The harness stays Inspect-free; this code is where Inspect lives.
+The **swarm** runs on top of the completed device layer (pool + broker). This is the feature
+CONTEXT.md calls the **Inspect layer**. The harness stays Inspect-free; this code is where
+Inspect lives.
 
-Built in **three thin slices**, each independently green:
+## Swarm model (pivoted 2026-09-17)
 
-1. **Smoke slice** (tickets 01–02) — prove the plumbing: one bridged Claude Code agent, toy
-   prompt, APK staged but unused, **no orchestrator, no emulator**. Inspect task →
-   `sandbox_agent_bridge()` → CC runs → completion → scorer → transcript logged.
-2. **Orchestrator slice** (ticket 03, stub) — add the N-parametric orchestrator→worker
-   fan-out at **N=1**, still no device. The infra must make **N=2 a prompt change**, not new
-   plumbing.
-3. **Dynamic-agent slice** (ticket 04, stub) — a worker acquires a device from the broker,
-   drives it over adb/frida, runs a real loop on **RootBeer**.
+Each agent is **its own Inspect run** — one bridged Claude Code agent = one bridge = one clean
+transcript. The agents **collaborate through an external, host-side messageboard**, and a
+separate **arbiter** run decides when the mission is done and issues the verdict. An external
+**launcher** starts the N runs, creates the board, links devices from the broker, and
+correlates the logs.
 
-Slices 2–3 are **stubs on purpose** (per the grilling): slice 1 will change our priors about
-solver/sandbox/fan-out shape, so their design decisions are captured as open questions to
-**resume grilling** once the smoke slice is real — not locked in now.
+**Why not one run with subagents (Fork A, abandoned):** the agent bridge cannot attribute
+concurrent-subagent model calls to their own transcript spans — they collapse onto the parent
+span, so subagent traces interleave (verified live: 10/11 model events on the orchestrator
+span). Separate runs fix this **by construction**.
+
+**Why not Inspect's within-run parallelism:** samples/epochs are for repeating the *same*
+problem for consistency, not for distinct collaborating agents. So Inspect is used **per
+agent** (consistency + logging + the CC bridge); the swarm layer (launcher, board, arbiter,
+cross-run scoring) is **entirely external** to Inspect — Inspect has no cross-run shared state.
+
+## Ticket map
+
+- **01–02 — Smoke slice (done).** One bridged CC agent, toy prompt, APK staged, scorer, log.
+  Proves Inspect task → `sandbox_agent_bridge()` (via `inspect_swe.claude_code()`) → CC →
+  completion → scorer → transcript.
+- **03 — Orchestrator smoke (SUPERSEDED).** Fork A; abandoned over the interleaving above.
+- **04 — Dynamic agent, end-to-end (ready, do first).** One bridged CC agent in a sandbox with
+  the Android offensive toolchain, handed a **broker-granted device**, reaching it over adb,
+  working the **RootBeer** APK. Self-report oracle. Combines the agent with its device-linking
+  infra (can't prove one without the other). **The reusable unit ticket 05 launches N times.**
+- **05a — Messageboard (ready).** Host-side append-only one-file-per-message board +
+  `bridged_tools` (`post_message`/`list_messages`/`read_message`). The comms substrate;
+  provable with two hand-started runs. Independent of 04.
+- **05b — Conductor (stub-ready).** Launcher + arbiter + termination + device-linking + log
+  correlation over **N separate runs**. Builds on 04 + 05a.
+- **06 — Machine-checkable oracle (future).** Replaces self-report for RootBeer; **gates the
+  model sweep**.
 
 ---
 
-## Settled decisions (from grilling, 2026-09-03/04)
+## Settled decisions
 
-- **Eval unit.** `Sample = one target APK`. `input` = the mission; `files` = the APK staged
-  into the sandbox; `metadata`/`target` = the oracle's success signal for that app. `Dataset`
-  = the **target ladder** (RootBeer → RASP → real). **N (swarm size) is a solver/task
-  parameter**, not a sample field and not the dataset. So: different rung = different sample;
-  N=1 vs N=2 = same task, different arg; model sweep = same everything, different served model.
-- **Slice-1 dataset** = a **single RootBeer sample**. APK always delivered via the Sample's
-  `files` (staged into the sandbox), never a host path.
-- **Bridge (M1) = stand on `inspect_swe.claude_code()`.** The CC-in-sandbox bridge plumbing
-  is delegated to `inspect_swe`; we hand-roll the Inspect **task / dataset / scorer** now and
-  the **orchestrator / fan-out** in slice 2. `inspect_swe` docs:
-  https://meridianlabs-ai.github.io/inspect_swe/claude_code.html . Bridge reference:
-  https://inspect.aisi.org.uk/agent-bridge.html .
-- **Smoke scorer (S1)** exercises **both** completion paths: a `submit`-style **tool call**
-  and a **final-message match**. Green when the agent produces the expected token either way.
-- **Keyless sandbox (S2).** The bridge serves the model: sandboxed CC runs keyless against
+- **One Inspect run = one agent working one mission.** A `Sample` carries the mission (`input`),
+  the **APK via the Sample `files`** (staged into the sandbox, never a host path), and
+  `metadata`/`target` for the oracle. The **swarm = N such runs over the same mission**,
+  coordinated via the board; N = how many runs the **launcher** starts (not a within-run param).
+  The **target ladder** (RootBeer → RASP → real) is future missions.
+- **Bridge = stand on `inspect_swe.claude_code()`** (M1). CC-in-sandbox bridge plumbing is
+  delegated; we hand-roll the Inspect task/dataset/scorer and the external swarm layer.
+- **Keyless sandbox (S2).** Sandboxed CC runs keyless against
   `ANTHROPIC_BASE_URL=http://localhost:13131` with `model="inspect"`; the **host-side**
-  `inspect eval --model anthropic/claude-…` provider does the real call. This is exactly what
-  makes the later **model sweep a one-flag change**. No Anthropic key baked into the image.
-- **Completion is passive.** The agent just runs to completion; the solver returns
-  `bridge.state`; Inspect logs the transcript passively (no explicit "done" event; a bridged
-  agent's *subagent* model calls also route through the one bridge and are captured).
-- **Oracle.** MVP = agent **self-report** + manual verification. Real oracle (later) = a
-  per-app **manifest** declaring a machine-checkable success signal (logcat/state observed
-  independently). Slice 1's scorer is a trivial token match, not the real oracle.
-- **Orchestrator role (Q3).** Thin **scheduler/budget-owner** now (option b), phased toward a
-  planner/coordinator later (option c). No domain planning at N=1. Hard constraint: the
-  fan-out infra must be **N-parametric so N=2 is only a prompt change to the orchestrator**.
-- **Separation.** The harness (`bin/`, `devices/`) stays **Inspect-free** (asserted by its
-  suite). The Inspect-side code is a **separate Python project** that imports Inspect and
-  reaches the broker as an **external host process** (never imports harness internals).
+  `inspect eval --model anthropic/claude-…` provider does the real call — so a **model sweep is
+  a one-flag change**. No Anthropic key in the image.
+- **Completion is passive.** The agent runs to completion; the solver returns `bridge.state`;
+  Inspect logs the transcript passively. (Per-agent now, so no subagent-attribution problem.)
+- **Oracle = self-report** MVP + manual verification. Machine-checkable oracle (per-app signal
+  from logcat/state) deferred — but it **gates the model sweep** (can't sweep on a manual oracle).
+- **Messageboard = host-side, append-only, one file per message in a directory** (the broker's
+  one-dir-per-request idiom — no append races). Reached from each run via `inspect_swe`
+  **`bridged_tools`**, **not** Inspect's `store` (per-sample-isolated), **not**
+  `host.docker.internal` (raw). Message = `{ts, author, subject, type, content}`. **Two-tier
+  read** keeps agent context clean: `list_messages` returns the **subject index** only,
+  `read_message(ids)` pulls full bodies on demand. **`author` is stamped host-side** from the
+  run's `AGENT_ID` (no spoofing).
+- **Arbiter = its own Inspect run** — a bridged agent that watches the board, applies a thin
+  rubric (success on first credible `success` claim; fail on all-`giveup`/timeout), posts a
+  reserved `done`+verdict, and is the **swarm oracle** for now.
+- **Log correlation.** All worker+arbiter `.eval` logs land in `logs/<swarm-id>/` (via
+  `INSPECT_LOG_DIR`) with `swarm-id/agent-id/role` metadata; the launcher also **saves the
+  messageboard** into that folder, so a swarm run = transcripts + the conversation, one artifact.
+- **Launch profile = `writable-/system`** (current env-up default; Frida-only a per-grant
+  fallback).
+- **Separation.** The harness (`bin/`, `devices/`) stays **Inspect-free**. The Inspect-side
+  code is a separate Python project that reaches the broker as an **external host process**.
 
 ## Structure (confirmed in ticket 01)
 
-- Inspect-side Python project lives in top-level **`swarm-eval/`**, importable package
-  **`swarm_eval`** (uv project). Chosen over `swarm/` and `inspect-evals/`: `inspect*` would
-  collide with AISI's published `inspect_evals` suite / shadow stdlib `inspect`; `swarm_eval`
-  keeps the "eval" signal with no clash.
+- Inspect-side Python project in top-level **`swarm-eval/`**, package **`swarm_eval`** (uv
+  project). Chosen over `swarm/`/`inspect-evals/` (`inspect*` would collide with AISI's
+  `inspect_evals` / shadow stdlib `inspect`).
 - Deps pinned in the project's own **`pyproject.toml` + `uv.lock`** (not the harness
-  `versions.txt`, which stays Inspect-free). `inspect-ai` pinned as a floor; the lockfile holds
-  the exact version. `inspect_swe` to be added in ticket 02.
+  `versions.txt`). `inspect-ai` + `inspect_swe` pinned; lockfile holds exact versions.
 
 ## Device layer it sits on (done)
 
 - **Broker** — standing host process, file-backed request/response **queue** under
-  `BROKER_DIR/queue/` (no socket). Client verbs: `acquire`/`release`/`status`/`list`/`ping`/
-  `shutdown`. Grant response = connection contract **plus** launch profile:
-  `serial=… console_port=… adb_port=… profile=frida-only`. CLI: `bin/broker`. Serial by
-  design (one boot at a time), cap default **3**. `host.docker.internal` reachability from a
-  sandbox is explicitly **out of scope** in the harness — the queue dir is the seam a socket
-  shim would wrap. See `.scratch/emulator-harness/issues/06-broker-service.md`.
+  `BROKER_DIR/queue/` (no socket). Verbs: `acquire`/`release`/`status`/`list`/`ping`/`shutdown`.
+  Grant = connection contract + profile: `serial=… console_port=… adb_port=…
+  profile=writable-system` (current default). CLI: `bin/broker`. Serial (one boot at a time),
+  cap default **3**. `host.docker.internal` reachability from a sandbox was left out of the
+  harness on purpose — the queue dir is the seam. See
+  `.scratch/emulator-harness/issues/06-broker-service.md`.
 
 ---
 
 ## Deferred decisions — resume grilling here
 
-### Slice 2 (orchestrator / fan-out)
-- **Fan-out mechanism.** Where does "spawn N workers" live?
-  (i) `inspect_swe` **native subagents** (configured, e.g. `subagent_model`), (ii) an
-  **orchestrator prompt** that tells the CC agent to spawn worker subagents via its own Task
-  tool, (iii) **Inspect-Python** fan-out (solver spawns N bridged agents). Constraint from
-  Q3: **N=2 must be a prompt change.** (i)/(ii) satisfy that most directly; (iii) is a
-  config/Python change. Fact-find confirmed subagent calls route through the one bridge and
-  are logged, and `inspect_swe` exposes `subagent_model`.
-- **Worker isolation.** Subagents share the orchestrator's **one sandbox/filesystem**, or a
-  **sandbox per worker**? Interacts with device-per-worker (slice 3): N workers each holding a
-  distinct broker device.
-- **Aggregation.** How the orchestrator collects worker findings into the single result the
-  scorer reads (`bridge.state`).
+### Ticket 04 (single dynamic agent) — decisions folded into the ticket
+- Broker reach: **control** (acquire/release) by the **solver setup/teardown** (guaranteed
+  release) via `bin/broker`; **data** (drive the device) via `host.docker.internal:<adb_port>` +
+  `adb connect` from inside the sandbox (unavoidable — emulator is on the host).
+- Image toolchain: `adb`, `frida`/`frida-tools` pinned to server **17.17.0**, `objection`,
+  `python3`; sandbox needs **host network** (not `network_mode: none`) for adb.
 
-### Slice 3 (dynamic agent / device)
-- **Broker reach from the sandbox.** `inspect_swe` **`bridged_tools`** (host-side Inspect
-  tools exposed to the sandboxed agent over a generated stdio MCP server) — strong candidate:
-  wrap `bin/broker acquire/release` as bridged tools — **vs** `host.docker.internal` + adb
-  port-forwarding into the container (the deferred networking). Which one, and who calls
-  `acquire`/`release` (solver setup/teardown vs the agent via a bridged tool)?
-- **Cap vs N vs epochs.** Broker cap (3) vs swarm N vs Inspect's own sample concurrency /
-  epochs — how they coordinate so the cap is never oversubscribed.
-- **Oracle evolution.** Move from self-report to the per-app manifest (machine-checkable
-  signal from logcat/state) for RootBeer.
-- **Provider-side tools.** Sandbox bridge withholds `web_search`/`code_execution`/
-  `client_mcp_servers` by default — decide per-eval whether the offensive loop needs any.
+### Ticket 05a/05b (swarm framework) — grilled & settled, folded into the tickets
+- **05a messageboard**: host-side append-only one-file-per-message dir; `bridged_tools` with
+  two-tier read (`list_messages` index → `read_message` bodies); author stamped host-side.
+- **05b conductor**: Python launcher in `swarm-eval/` starts N worker + 1 arbiter `inspect eval`
+  subprocesses; env-var injection; **launcher pre-acquires** devices per dynamic role (≤ cap,
+  fail-fast); arbiter = own run + swarm oracle (self-report rubric); termination = cooperative
+  `done`-poll + per-run Inspect limit + launcher-kill; logs + saved board collated under
+  `logs/<swarm-id>/`. `N=1-is-single`, uniform path.
+
+### Ticket 06 (machine-checkable oracle) — future, grill before building
+- Replace self-report with an independent RootBeer signal (logcat/state) per a per-app manifest;
+  plugs into the arbiter without changing termination wiring. **Gates the model sweep.**
