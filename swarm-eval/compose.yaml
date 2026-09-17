@@ -1,0 +1,13 @@
+# Ticket 04 — sandbox for the dynamic agent. Unlike Inspect's auto-generated compose (which
+# pins `network_mode: none`), this sandbox needs **host network reach**: the emulator lives on
+# the HOST, so the sandboxed `adb connect host.docker.internal:<adb_port>` (data plane) can't
+# work on an islanded container. `extra_hosts` maps the host-loopback alias on Linux
+# (Docker Desktop already provides it on macOS/Windows).
+services:
+  default:
+    build: .
+    # Default bridge networking (NOT network_mode: none) so adb can reach the host emulator.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    init: true
+    command: ["tail", "-f", "/dev/null"]

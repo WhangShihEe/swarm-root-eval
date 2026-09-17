@@ -1,19 +1,33 @@
 [project]
 name = "swarm-eval"
 version = "0.1.0"
-description = "Add your description here"
+description = "Inspect-side swarm eval: bridged Claude Code agents probing Android app anti-root defenses"
 readme = "README.md"
 authors = [
     { name = "whangshihee", email = "whangse123@gmail.com" }
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "anthropic==1.4.0",
     # Pinned floor; uv.lock holds the exact resolved version. Held stable so a model
     # sweep varies only the served model, never the harness under it (spec S2).
     "inspect-ai>=0.3.263",
+    "inspect-swe==0.2.70",
 ]
 
 
 [build-system]
 requires = ["uv_build>=0.12.3,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.pytest.ini_options]
+# tests import the root-level entrypoint (dynamic_agent.py) and the package under src/.
+pythonpath = [".", "src"]
+asyncio_mode = "auto"
+testpaths = ["tests"]
