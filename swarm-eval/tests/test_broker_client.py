@@ -60,6 +60,13 @@ def test_render_connect_script_wires_adb_and_frida_check():
     assert "17.17.0" in script  # pinned frida version-match assertion
 
 
+def test_render_contract_line_roundtrips_through_parse_contract():
+    # 05b: the launcher relays a pre-acquired contract to a worker as a file; the worker parses
+    # it back with the same `parse_contract` a real broker grant uses. Render → parse is identity.
+    c = parse_contract(CONTRACT_LINE)
+    assert parse_contract(c.render_contract_line()) == c
+
+
 # ---- acquire/release against a fake broker -------------------------------------------------
 
 def _write_fake_broker(dirpath: Path, body: str) -> Path:
