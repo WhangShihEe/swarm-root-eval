@@ -153,3 +153,18 @@ def test_task_swarm_mode_wraps_prompt_and_stamps_metadata(monkeypatch, tmp_path)
     prompt = t.dataset[0].input
     assert "Collaboration protocol" in prompt
     assert "worker-2" in prompt  # peer named
+
+
+def test_task_swarm_mode_honours_spec_selected_target(monkeypatch, tmp_path):
+    # The swarm path is APK-agnostic too (ticket 02): `-T spec=<yaml>` picks the target, and the
+    # collaboration wrapper composes around whichever mission that yaml renders.
+    monkeypatch.setenv(ENV_DEVICE_CONTRACT, str(tmp_path / "worker-1.device"))
+    monkeypatch.setenv(ENV_SWARM_ID, "swarm-abc")
+    monkeypatch.setenv(ENV_AGENT_ID, "worker-1")
+    monkeypatch.setenv(ENV_WORKER_IDS, "worker-1")
+
+    t = da.dynamic_agent(spec="devices/healthhub.yaml")
+    prompt = t.dataset[0].input
+    assert "HealthHub" in prompt and "RASP Target" not in prompt
+    assert "Collaboration protocol" in prompt  # still wrapped for the swarm
+    assert "/root/base.apk" in t.dataset[0].files

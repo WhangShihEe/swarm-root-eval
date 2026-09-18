@@ -1,30 +1,87 @@
-"""Ticket 04 — mission prompt + self-report oracle extraction (pure)."""
+"""APK-agnostic refactor, ticket 02 — ONE generic mission built from a `TargetConfig`.
 
-from swarm_eval.mission import build_mission, extract_self_report, VERDICT_TOKEN
+Proves the two shipped targets render through a single template: the target-agnostic boilerplate
+(device connect + exact toolchain + efficiency nudge + verdict format) is byte-identical across
+them, while the app slots differ, and `frida_mode` drives the spawn-vs-attach structural
+difference. Plus the (unchanged) self-report verdict extraction. Pure — no broker, no corpus:
+`load_target` reads only the yaml (the split file-set is not needed to render a mission).
+"""
+
+from swarm_eval.mission import (
+    VERDICT_TOKEN,
+    _device_and_tools,
+    _efficiency_nudge,
+    _verdict_block,
+    build_mission,
+    extract_self_report,
+)
+from swarm_eval.target import load_target
+
+CONTRACT = "/root/device-contract.env"
+RASP = load_target("devices/rasp_dummy.yaml")        # frida_mode: attach, single APK
+HEALTHHUB = load_target("devices/healthhub.yaml")    # frida_mode: spawn, split set
 
 
-def test_build_mission_mentions_apk_contract_and_toolchain():
-    m = build_mission(apk_name="rasp_dummy.apk", contract_path="/root/device-contract.env")
-    assert "rasp_dummy.apk" in m
-    assert "/root/device-contract.env" in m
-    # the agent must be pointed at the live-device data plane and the toolchain
-    assert "adb" in m.lower()
-    assert "frida" in m.lower()
-    # and told how to self-report so the oracle can read a verdict
-    assert VERDICT_TOKEN in m
+def test_build_mission_fills_app_slots_from_target():
+    m = build_mission(RASP, contract_path=CONTRACT)
+    # the app slots all come from the TargetConfig (yaml app: block)
+    assert "rasp_dummy.apk" in m                 # primary APK staged name
+    assert "com.example.rasptarget" in m         # package
+    assert "RASP Target" in m                    # label
+    assert "com.example.rasptarget.MainActivity" in m  # launch_activity
+    assert CONTRACT in m                         # injected contract path
+    assert VERDICT_TOKEN in m                    # self-report contract
+    # the app-specific detail is carried verbatim from the yaml (no regression vs the old prompt)
+    for token in ("RaspEngine", "RASPTARGET", "com.example.rasptarget.detectors", "--es checks"):
+        assert token in m, f"mission should carry app detail {token!r}"
 
 
-def test_build_mission_lists_exact_ticket07_toolchain():
-    # Ticket 07: the prompt must NAME every baked tool (dynamic + static + the frida-17 bridge
-    # workflow) and the non-interactive runner — not hand-wave "static tools may also be present".
-    m = build_mission(apk_name="rasp_dummy.apk", contract_path="/root/device-contract.env")
+def test_build_mission_lists_exact_toolchain():
+    # The prompt must NAME every baked tool (dynamic + static + the frida-17 bridge workflow) and
+    # the non-interactive runner — not hand-wave "static tools may also be present".
+    m = build_mission(RASP, contract_path=CONTRACT)
     for tool in ("frida-compile", "frida-java-bridge", "frida-run", "objection",
                  "jadx", "apktool", "androguard"):
         assert tool in m, f"mission prompt should name {tool}"
-    # the frida-17 gotcha (no built-in Java global) must be called out, and the scaffold pointed to
+    # the frida-17 gotcha (no built-in Java global) + the scaffold pointer, and the over-promise gone
     assert "frida-java-bridge" in m and "/opt/frida-agent" in m
-    # the over-promising hedge is gone
     assert "may also be present" not in m
+    # the load-bearing operational notes ticket 02 requires in the shared block
+    assert "adb logcat -d" in m                  # watchdog / one-shot note
+    assert "Java.scheduleOnMainThread" in m      # main-thread hooking note
+
+
+def test_boilerplate_is_byte_identical_across_targets():
+    # The target-agnostic operating manual renders identically and appears verbatim in BOTH
+    # missions — the whole point of the refactor: the only difference is the yaml.
+    rasp = build_mission(RASP, contract_path=CONTRACT)
+    hh = build_mission(HEALTHHUB, contract_path=CONTRACT)
+    for block in (_device_and_tools(CONTRACT), _efficiency_nudge(), _verdict_block()):
+        assert block in rasp
+        assert block in hh
+
+
+def test_app_slots_differ_across_targets():
+    rasp = build_mission(RASP, contract_path=CONTRACT)
+    hh = build_mission(HEALTHHUB, contract_path=CONTRACT)
+    assert rasp != hh
+    assert "RASP Target" in rasp and "RASP Target" not in hh
+    assert "HealthHub" in hh and "HealthHub" not in rasp
+    # the objective slot is the target's own, not shared boilerplate
+    assert RASP.objective in rasp and RASP.objective not in hh
+    assert HEALTHHUB.objective in hh and HEALTHHUB.objective not in rasp
+
+
+def test_frida_mode_drives_spawn_vs_attach():
+    rasp = build_mission(RASP, contract_path=CONTRACT)       # attach
+    hh = build_mission(HEALTHHUB, contract_path=CONTRACT)    # spawn
+    assert RASP.frida_mode == "attach" and HEALTHHUB.frida_mode == "spawn"
+    # attach target: ATTACH guidance, and NO spawn-only "reproduce the crash first" step
+    assert "ATTACH" in rasp and "-a <pid>" in rasp
+    assert "Reproduce the failure FIRST" not in rasp
+    # spawn target: SPAWN guidance + the reproduce-first step
+    assert "SPAWN" in hh and "-f <package>" in hh
+    assert "Reproduce the failure FIRST" in hh
 
 
 def test_extract_self_report_success():

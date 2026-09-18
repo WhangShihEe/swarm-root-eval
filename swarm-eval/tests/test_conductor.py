@@ -237,11 +237,25 @@ def test_build_run_argv_defaults_carry_a_time_limit(tmp_path):
     assert "--message-limit" not in argv  # message limit stays opt-in
 
 
+def test_build_run_argv_selects_target_via_spec(tmp_path):
+    # apk-agnostic refactor (ticket 02): the worker's target is the device yaml, passed as
+    # `-T spec=<yaml>` so the spawned dynamic_agent stages the right APK(s) + mission.
+    argv = build_run_argv(config=cfg(tmp_path, spec="devices/healthhub.yaml"), task="dynamic_agent.py")
+    assert "-T" in argv and "spec=devices/healthhub.yaml" in argv
+    # -T spec=... rides right after the task, before --model
+    i = argv.index("-T")
+    assert argv[i - 1] == "dynamic_agent.py" and argv[i + 1] == "spec=devices/healthhub.yaml"
+
+
 def test_build_run_argv_omits_limits_when_explicitly_none(tmp_path):
     argv = build_run_argv(
         config=cfg(tmp_path, time_limit=None, message_limit=None), task="dynamic_agent.py"
     )
-    assert argv == ["inspect", "eval", "dynamic_agent.py", "--model", C.DEFAULT_MODEL]
+    assert argv == [
+        "inspect", "eval", "dynamic_agent.py",
+        "-T", f"spec={C.DEFAULT_SPEC}",
+        "--model", C.DEFAULT_MODEL,
+    ]
 
 
 def test_build_run_argv_includes_both_limits_when_set(tmp_path):

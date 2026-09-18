@@ -197,9 +197,11 @@ def build_run_env(
 
 
 def build_run_argv(*, config: SwarmConfig, task: str) -> list[str]:
-    """The `inspect eval` argv for one run. Per-run limits (layer b) ride as CLI flags; the log
-    dir rides as `INSPECT_LOG_DIR` in the env, not a flag."""
-    argv = ["inspect", "eval", task, "--model", config.model]
+    """The `inspect eval` argv for one run. `-T spec=<yaml>` selects the worker's target (the
+    same device yaml the launcher pre-acquired), so the spawned `dynamic_agent` stages the right
+    APK(s) + mission (apk-agnostic refactor, ticket 02). Per-run limits (layer b) ride as CLI
+    flags; the log dir rides as `INSPECT_LOG_DIR` in the env, not a flag."""
+    argv = ["inspect", "eval", task, "-T", f"spec={config.spec}", "--model", config.model]
     if config.time_limit is not None:
         argv += ["--time-limit", str(config.time_limit)]
     if config.message_limit is not None:

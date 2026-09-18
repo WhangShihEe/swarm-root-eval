@@ -7,9 +7,8 @@ fields (an additive nested `app:` block the bash layer ignores). It is the Pytho
 counterpart to bash's `_spec.sh` — the one place a yaml becomes a typed harness value, so no
 later ticket reads a yaml or hardcodes an app.
 
-Prefactor (ticket 01): the new form is added beside the old `TargetSpec` in `dynamic_agent.py`;
-nothing downstream consumes it yet. Ticket 02 switches the mission over to it, ticket 03 the
-launchers.
+Ticket 02 switched the mission + `dynamic_agent` @task over to this (the old in-`dynamic_agent`
+`TargetSpec` registry is gone); ticket 03 moves the launchers onto it.
 """
 
 from __future__ import annotations

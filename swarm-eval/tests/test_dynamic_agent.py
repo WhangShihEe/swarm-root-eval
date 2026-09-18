@@ -89,6 +89,33 @@ def test_task_carries_fail_fast_time_limit():
     assert da.dynamic_agent(time_limit=300).time_limit == 300
 
 
+def test_dynamic_agent_selects_target_purely_from_spec_yaml():
+    # apk-agnostic refactor (ticket 02): `-T spec=<yaml>` is the ONLY target selector — the task
+    # stages the right APK(s) and renders the right mission from that yaml alone.
+    rasp = da.dynamic_agent()  # default spec = the RASP toy
+    assert "RASP Target" in rasp.dataset[0].input
+    assert list(rasp.dataset[0].files) == ["/root/rasp_dummy.apk"]
+
+    hh = da.dynamic_agent(spec="devices/healthhub.yaml")
+    assert "HealthHub" in hh.dataset[0].input
+    assert "RASP Target" not in hh.dataset[0].input
+    # the split set's base is the decompile target + is staged (splits ride along if the corpus
+    # is present; base is emitted unconditionally, so this holds without the untracked apks/).
+    assert "/root/base.apk" in hh.dataset[0].files
+
+
+def test_build_dynamic_task_builds_from_targetconfig():
+    # The shared builder both entrypoints spawn takes a resolved TargetConfig and wires setup
+    # (device acquire against the target's spec), scorer, and the staged file-set.
+    from swarm_eval.target import load_target
+
+    target = load_target("devices/rasp_dummy.yaml")
+    t = da.build_dynamic_task(target, time_limit=321)
+    assert t.time_limit == 321
+    assert t.dataset[0].files == dict(target.files)
+    assert t.setup is not None and t.scorer is not None
+
+
 @pytest.mark.asyncio
 async def test_self_report_scorer_reds_on_failure_and_on_missing_verdict():
     from inspect_ai.scorer import INCORRECT, Target
