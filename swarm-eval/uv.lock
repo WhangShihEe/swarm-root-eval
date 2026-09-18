@@ -1844,6 +1844,7 @@ dependencies = [
     { name = "inspect-ai" },
     { name = "inspect-swe" },
     { name = "openai" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -1858,6 +1859,7 @@ requires-dist = [
     { name = "inspect-ai", specifier = ">=0.3.263" },
     { name = "inspect-swe", specifier = "==0.2.70" },
     { name = "openai", specifier = ">=3.14.1" },
+    { name = "pyyaml", specifier = ">=6" },
 ]
 
 [package.metadata.requires-dev]
