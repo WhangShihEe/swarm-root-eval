@@ -1,30 +1,31 @@
-"""Ticket 04 — Dynamic agent, end-to-end.
+"""The dynamic agent — the one spawnable agent unit both entrypoints run.
 
 One bridged Claude Code agent, in a sandbox carrying the Android offensive toolchain, handed a
 **broker-granted device**, reaching it over adb from inside the sandbox, working the target APK
-its device yaml selects (`-T spec=devices/<name>.yaml` → `TargetConfig`; apk-agnostic). This is
-the reusable dynamic-agent unit that the ticket-05b Conductor launches N times.
+its device yaml selects (`-T spec=devices/<name>.yaml` → `TargetConfig`; apk-agnostic). It is
+spawned 1× by `single_agent.py` and N× by `conductor.py`/`swarm.py`.
 
 Separate-runs swarm model: one agent = one bridge = one clean transcript (no subagent
-interleaving). It runs in **two modes**, same task, chosen by the launcher's injected env:
+interleaving). The agent NEVER talks to the broker itself (ticket 03): a device contract is
+ALWAYS injected by the launcher as the `DEVICE_CONTRACT` file, and the launcher owns the lease
+(guaranteed host-side release via a try/finally — an LLM worker can't be trusted to free a
+scarce device). The setup solver reads + parses that file and stages it into the sandbox, and
+**fails fast** if none is present — running `inspect eval dynamic_agent.py` directly is a
+misuse; go through a launcher. There is no in-task acquire and no release teardown.
 
-- **Standalone (ticket 04)** — no `DEVICE_CONTRACT` set. The setup solver acquires a device
-  from the broker and the teardown releases it (guaranteed release: an LLM worker can't be
-  trusted to free a scarce device). Run it with a broker up (`bin/broker start`):
+It runs in **two modes**, same task, chosen by the launcher's injected env — the signal is the
+presence of the board coordinates (`SWARM_ID`), NOT `DEVICE_CONTRACT` (always set now):
 
-      inspect eval dynamic_agent.py --model anthropic/claude-sonnet-4-5-...
-
-- **Swarm worker (ticket 05b)** — the Conductor pre-acquires the device, injects its contract
-  as `DEVICE_CONTRACT` (a file) plus the board coordinates (`BOARD_DIR`/`SWARM_ID`/`AGENT_ID`/
-  `SWARM_WORKER_IDS`), and owns the lease. The solver then reads the contract instead of
-  acquiring, teardown does **not** release (the launcher does, at swarm teardown), and the
-  agent gets the shared-board tools + a collaboration prompt so N runs coordinate.
+- **Single** — a contract, no board env (`single_agent.py`, or `swarm.py … -n 1`'s worker). The
+  bare mission, no board tools.
+- **Swarm worker** — a contract PLUS the board coordinates (`BOARD_DIR`/`SWARM_ID`/`AGENT_ID`/
+  `SWARM_WORKER_IDS`) the conductor injects. The agent additionally gets the shared-board tools
+  + a collaboration prompt so N runs coordinate.
 
 Data plane is the same in both: the agent drives the device over
 `adb connect host.docker.internal:<adb_port>` from inside the sandbox.
 """
 
-import logging
 import os
 from dataclasses import asdict
 from pathlib import Path
@@ -36,15 +37,15 @@ from inspect_ai.solver import Generate, Solver, TaskState, solver
 from inspect_ai.util import sandbox
 from inspect_swe import claude_code
 
+from swarm_eval.agent_runner import DEFAULT_TIME_LIMIT, ENV_DEVICE_CONTRACT
 from swarm_eval.board_tools import ENV_AGENT_ID, board_tools_spec
-from swarm_eval.broker_client import DEFAULT_SPEC, Contract, acquire, parse_contract, release
-from swarm_eval.conductor import ENV_DEVICE_CONTRACT, ENV_ROLE, ENV_WORKER_IDS, ROLE_WORKER
-from swarm_eval.messageboard import ENV_SWARM_ID  # its canonical home (conductor only re-uses it)
+from swarm_eval.broker_client import DEFAULT_SPEC, parse_contract
+from swarm_eval.conductor import ENV_ROLE, ENV_WORKER_IDS, ROLE_WORKER
+from swarm_eval.messageboard import ENV_SWARM_ID  # its canonical home (conductor re-uses it)
 from swarm_eval.mission import build_mission, extract_self_report
 from swarm_eval.model_filters import sweep_generate_filter
 from swarm_eval.target import TargetConfig, load_target
 
-logger = logging.getLogger(__name__)
 
 # The harness is APK-agnostic (CLAUDE.md): a run's target is defined ENTIRELY by its device yaml
 # (`-T spec=devices/<name>.yaml`), read into a `TargetConfig` by `load_target` — which APK(s) to
@@ -55,45 +56,42 @@ logger = logging.getLogger(__name__)
 CONTRACT_PATH = "/root/device-contract.env"
 CONNECT_SCRIPT = "/root/connect-device.sh"
 
-# metadata["device_owner"] values: who holds the broker lease, so teardown frees it exactly once.
-OWNER_SOLVER = "solver"  # standalone: this run acquired it → this run releases it
-OWNER_LAUNCHER = "launcher"  # swarm: the Conductor pre-acquired it → the Conductor releases it
+# Raised by the setup solver when no device contract was injected — i.e. the agent was run
+# directly (`inspect eval dynamic_agent.py`) instead of through a launcher that leases a device
+# and injects its contract. Fail-fast (ticket 03): a contract is always injected in normal use.
+NO_CONTRACT_MSG = (
+    "no device contract injected (DEVICE_CONTRACT is unset). The dynamic agent never leases a "
+    "device itself — run it via single_agent.py or swarm.py, which lease a broker device and "
+    "inject its contract; do not run `inspect eval dynamic_agent.py` directly."
+)
 
 
 def swarm_mode() -> bool:
-    """True when the Conductor (05b) launched this run: it injects `DEVICE_CONTRACT` (a
-    pre-acquired contract file). Standalone (ticket 04) has none and acquires its own device."""
-    return bool(os.environ.get(ENV_DEVICE_CONTRACT))
-
-
-def _obtain_contract(spec: str, state: TaskState) -> Contract:
-    """Get the device contract for this run and record who owns its broker lease.
-
-    Swarm (05b): the launcher pre-acquired the device and injected its contract as a file
-    (`DEVICE_CONTRACT`); read + parse it — do **not** acquire (that would take a second scarce
-    device, uncounted by the launcher's budget). Standalone (ticket 04): acquire from the broker
-    here. `device_owner` drives teardown so the lease is released exactly once, by its owner."""
-    contract_path = os.environ.get(ENV_DEVICE_CONTRACT)
-    if contract_path:
-        contract = parse_contract(Path(contract_path).read_text(encoding="utf-8"))
-        state.metadata["device_owner"] = OWNER_LAUNCHER
-        return contract
-    contract = acquire(spec)
-    state.metadata["device_owner"] = OWNER_SOLVER
-    return contract
+    """True when the conductor launched this run as a swarm worker: it injects the board
+    coordinates (`SWARM_ID`) on top of the always-present device contract. A single run (a
+    contract, no board env) returns False and gets the bare mission with no board tools."""
+    return bool(os.environ.get(ENV_SWARM_ID))
 
 
 @solver
-def acquire_device(spec: str = DEFAULT_SPEC) -> Solver:
-    """Setup solver: obtain this run's device contract (acquire it standalone, or read the
-    launcher-injected one in swarm mode — see `_obtain_contract`) and inject the contract of
-    record + a connect helper into the sandbox as files (chosen over env/metadata — the contract
-    is per-sample runtime data the sandbox must read). Stashes the serial in `state.metadata` so
-    teardown releases the right device even on failure."""
+def inject_device() -> Solver:
+    """Setup solver: read the launcher-injected device contract (`DEVICE_CONTRACT`, a host file
+    the launcher wrote for the device it leased) and stage the contract of record + a connect
+    helper into the sandbox as files (chosen over env/metadata — the contract is per-sample
+    runtime data the sandbox must read). Stashes the serial in `state.metadata` for the
+    transcript/scorer. Fails fast with a clear message if no contract was injected — the launcher
+    always injects one, so its absence means the agent was run directly instead of via a launcher.
+
+    There is no acquire and no release here: the launcher owns the device lease and frees it in a
+    host-side try/finally (guaranteed release even on failure/timeout), so this run never touches
+    the broker."""
 
     async def solve(state: TaskState, generate: Generate) -> TaskState:
-        contract = _obtain_contract(spec, state)
-        # Record for teardown (cleanup reads this) and for the transcript/scorer.
+        contract_path = os.environ.get(ENV_DEVICE_CONTRACT)
+        if not contract_path:
+            raise RuntimeError(NO_CONTRACT_MSG)
+        contract = parse_contract(Path(contract_path).read_text(encoding="utf-8"))
+        # Record for the transcript/scorer.
         state.metadata["device"] = asdict(contract)
         # Inject the contract of record + a connect helper into the sandbox.
         sbx = sandbox()
@@ -104,22 +102,6 @@ def acquire_device(spec: str = DEFAULT_SPEC) -> Solver:
         return state
 
     return solve
-
-
-async def release_device(state: TaskState) -> None:
-    """Teardown: release the granted device — but only if this run owns the lease. Standalone
-    (`device_owner` != `launcher`, incl. the legacy no-owner case) releases on success, failure,
-    and timeout alike, so a failed run still frees its scarce slot. In swarm mode the **Conductor**
-    owns the lease (it lifted acquire/release to the swarm level for guaranteed release across N
-    runs); releasing here would double-free a device the launcher will release again. `release()`
-    never raises; the broker also reclaims on its own shutdown."""
-    if state.metadata.get("device_owner") == OWNER_LAUNCHER:
-        return
-    device = state.metadata.get("device")
-    serial = device.get("serial") if device else None
-    if serial:
-        logger.info("releasing broker device %s", serial)
-        release(serial)
 
 
 @scorer(metrics=[accuracy(), stderr()])
@@ -173,12 +155,8 @@ def swarm_prompt(base_mission: str, agent_id: str, worker_ids: list[str]) -> str
     )
     return f"{preamble}\n\n{base_mission}\n\n{protocol}"
 
-# Fail-fast wall-clock budget for one sample (ticket 07). A hung or empty provider (e.g. a
-# sweep model returning empty turns) otherwise pins the scarce broker device through the whole
-# retry sequence; when this trips, the sample errors and `release_device` (cleanup) still runs,
-# freeing the slot. Wall-clock (not working-time) so a silent stall trips it too. Generous by
-# default for a real human-in-the-loop iteration; lower it for an unattended sweep.
-DEFAULT_TIME_LIMIT = 1800
+# The per-sample wall-clock cap defaults to the shared `agent_runner.DEFAULT_TIME_LIMIT` (the
+# same value the launchers pass as `--time-limit`), sourced from one place so the two can't drift.
 
 
 def build_dynamic_task(target: TargetConfig, *, time_limit: int = DEFAULT_TIME_LIMIT) -> Task:
@@ -215,12 +193,13 @@ def build_dynamic_task(target: TargetConfig, *, time_limit: int = DEFAULT_TIME_L
         dataset=MemoryDataset([
             Sample(input=mission, target="SUCCESS", files=dict(target.files))
         ]),
-        setup=acquire_device(target.spec_path),
+        setup=inject_device(),
         solver=claude_code(**solver_kwargs),
-        cleanup=release_device,
         scorer=self_report(),
-        # Fail-fast: bound the sample so a hung/empty provider releases the broker device
-        # (cleanup runs on the limit-error) instead of pinning it through the retry sequence.
+        # Fail-fast: bound the sample (wall-clock, so a silent stall trips it too) so a hung/empty
+        # provider errors out instead of pinning the scarce broker device through the whole retry
+        # sequence — the launcher's host-side `finally` then frees the leased device (the agent no
+        # longer owns the lease — ticket 03). Generous by default; lower it for an unattended sweep.
         time_limit=time_limit,
         metadata=metadata,
         # Host-network sandbox (compose.yaml adds host.docker.internal, no network_mode:none)

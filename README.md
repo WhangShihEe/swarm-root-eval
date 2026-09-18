@@ -83,39 +83,48 @@ image, and the `target_apk` to provision. Copy `devices/rasp_dummy.yaml` to add 
 
 ## 2. Run a single-agent test against a target APK
 
-One bridged agent, one device, one clean transcript. Bring a broker up, then run the eval:
+One bridged agent, one device, one clean transcript. The **launcher** `single_agent.py` owns the
+device lease (a scarce broker slot is a launcher concern, not an agent one): it leases a device,
+injects its connection contract into the run, launches the agent, and releases the device in a
+`finally` — guaranteed even on failure/timeout. Bring a broker up, then launch:
 
 ```bash
 source bin/env.sh
 bin/broker start                     # device layer up
 
 cd swarm-eval
-uv run inspect eval dynamic_agent.py --model anthropic/claude-sonnet-4-5-20250929
+uv run python single_agent.py devices/rasp_dummy.yaml --model anthropic/claude-sonnet-4-5-20250929
 ```
 
-What happens: the solver **acquires** a device from the broker and injects its connection
-contract into the sandbox; the agent connects over adb, inspects the APK with the baked static
-tools (jadx/apktool/androguard), and attempts the bypass with frida/objection; the self-report
-scorer reads the agent's final `RASP_BYPASS: SUCCESS|FAILURE` line; teardown **releases** the
-device (guaranteed, even on failure/timeout). The transcript lands in `swarm-eval/logs/`.
+What happens: the launcher **leases** a device from the broker and injects its connection
+contract; the agent's setup solver stages that contract into the sandbox and connects over adb,
+inspects the APK with the baked static tools (jadx/apktool/androguard), and attempts the bypass
+with frida/objection; the self-report scorer reads the agent's final `RASP_BYPASS: SUCCESS|FAILURE`
+line; the launcher **releases** the device. The transcript + scored self-report land in
+`swarm-eval/logs/<run-id>/`.
 
-Useful knobs (Inspect task params via `-T`, and standard flags):
+> The agent unit (`dynamic_agent.py`) never talks to the broker itself — a contract is always
+> injected by a launcher. Running `uv run inspect eval dynamic_agent.py` directly **fails fast**
+> with a clear message; go through `single_agent.py` (or `swarm.py`, §3).
+
+Useful knobs (`uv run python single_agent.py --help` for all):
 
 ```bash
-# a different provisioned device-spec (the device the broker grants):
-uv run inspect eval dynamic_agent.py -T spec=devices/dbs.yaml --model anthropic/claude-sonnet-4-5-20250929
+# a different device-spec is the ONLY change needed to attack a different app (apk-agnostic):
+uv run python single_agent.py devices/dbs.yaml --model anthropic/claude-sonnet-4-5-20250929
 
 # tighter fail-fast so a hung/empty provider releases the device sooner (default 1800s):
-uv run inspect eval dynamic_agent.py -T time_limit=600 --model anthropic/claude-sonnet-4-5-20250929
+uv run python single_agent.py devices/rasp_dummy.yaml --time-limit 600 --message-limit 60
 ```
 
-**Targeting a different APK.** The staged target is fixed in `dynamic_agent.py` (`APK` /
-`APK_NAME`) with its mission in `swarm_eval/mission.py`. To point the probe at a new app: drop
-the APK at `apks/<app>/<app>.apk`, add `devices/<app>.yaml` (copy an existing one), and update
-those constants + the mission (the mission is app-specific — it names the checks to defeat).
+**Targeting a different APK.** The eval is APK-agnostic: the target is defined ENTIRELY by its
+device yaml. To point the probe at a new app: drop the APK at `apks/<app>/<app>.apk`, add
+`devices/<app>.yaml` (copy an existing one, incl. its `app:` mission block), and pass that yaml
+— no Python or mission edits.
 
-> Single agent is just the swarm at **N=1**. You can equally run it through the launcher:
-> `uv run python swarm.py --workers 1` (§3) — same uniform path, plus a swarm-id artifact folder.
+> Single agent is just the swarm at **N=1**. You can equally run it through the swarm launcher:
+> `uv run python swarm.py devices/rasp_dummy.yaml --workers 1` (§3) — same per-run path, plus a
+> swarm-id artifact folder + a (one-participant) messageboard.
 
 ---
 
@@ -132,7 +141,7 @@ source bin/env.sh
 bin/broker start
 
 cd swarm-eval
-uv run python swarm.py --workers 3 \
+uv run python swarm.py devices/rasp_dummy.yaml --workers 3 \
     --model anthropic/claude-sonnet-4-5-20250929 \
     --time-limit 1200 \      # per-run wall-clock cap (seconds)
     --budget 2700            # whole-swarm wall-clock budget (seconds)
@@ -149,8 +158,8 @@ swarm <swarm-id>: SUCCESS — <reason>
 ```
 
 Exit code: `0` on a SUCCESS verdict, `1` on FAILURE (ran fine, didn't crack it), `2` on a setup
-failure. Common flags: `--spec devices/<app>.yaml` (target device), `--cap`, `--message-limit`,
-`--grace`, `--board-dir` / `--log-dir`. See `uv run python swarm.py --help`.
+failure. The device yaml is the required positional target (apk-agnostic). Common flags: `--cap`,
+`--message-limit`, `--grace`, `--board-dir` / `--log-dir`. See `uv run python swarm.py --help`.
 
 The `--model` flag is the **model-sweep** lever: the sandbox's keyless CC proxies to whatever
 host provider model you name, so swapping models is a one-flag change.

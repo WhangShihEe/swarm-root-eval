@@ -6,13 +6,15 @@ host-side arbiter over the board, posts the `done` verdict, and collates everyth
 `logs/<swarm-id>/`. A broker must be up first (`bin/broker start`).
 
     # single agent = the swarm at N=1 (uniform path, not special-cased)
-    python swarm.py --workers 1
+    python swarm.py devices/rasp_dummy.yaml --workers 1
 
-    # a 3-agent swarm on the RASP-target mission, 20-min per-run cap, 45-min swarm budget
-    python swarm.py --workers 3 --time-limit 1200 --budget 2700 \
+    # a 3-agent swarm on HealthHub, 20-min per-run cap, 45-min swarm budget
+    python swarm.py devices/healthhub.yaml --workers 3 --time-limit 1200 --budget 2700 \
         --model anthropic/claude-sonnet-4-5-20250929
 
-The `--model` flag is the model-sweep lever (spec S2): the sandbox's keyless CC proxies to it.
+The target is selected ENTIRELY by the device yaml (apk-agnostic): the required positional is the
+same yaml the broker acquires and the workers attack (`-T spec=`). The `--model` flag is the
+model-sweep lever (spec S2): the sandbox's keyless CC proxies to it.
 """
 
 from __future__ import annotations
@@ -22,7 +24,6 @@ import logging
 import sys
 from pathlib import Path
 
-from swarm_eval.broker_client import DEFAULT_SPEC
 from swarm_eval.conductor import (
     DEFAULT_CAP,
     DEFAULT_MODEL,
@@ -56,11 +57,11 @@ def build_config(args: argparse.Namespace) -> SwarmConfig:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="swarm", description="Launch one swarm run (ticket 05b).")
+    p.add_argument("spec", help="device yaml selecting the target, e.g. devices/healthhub.yaml")
     p.add_argument("-n", "--workers", type=int, default=1,
                    help="number of worker agents (N=1 is the single-agent case; default 1)")
     p.add_argument("--model", default=DEFAULT_MODEL,
                    help="served provider model the sandboxed CC proxies to (the sweep lever)")
-    p.add_argument("--spec", default=DEFAULT_SPEC, help="broker device spec (default rasp_dummy)")
     p.add_argument("--cap", type=int, default=DEFAULT_CAP,
                    help="max workers before fail-fast (mirrors the broker cap; default 3)")
     p.add_argument("--time-limit", type=int, default=None,

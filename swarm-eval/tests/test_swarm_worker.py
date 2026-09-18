@@ -1,18 +1,18 @@
-"""Ticket 05b — the dynamic agent's swarm-worker mode. When the Conductor injects
-`DEVICE_CONTRACT` (a pre-acquired contract) the run reads it instead of acquiring, does NOT
-release at teardown (the launcher owns the lease), and gets the shared-board tools + a
-collaboration prompt. Standalone (ticket 04) behaviour is unchanged. Hermetic: no broker, no
-docker — `acquire`/`sandbox()` are faked and the contract is a tmp file."""
+"""Ticket 03 — the dynamic agent's swarm-worker mode. A contract is ALWAYS injected (the launcher
+leases the device); the swarm SIGNAL is the presence of the board coordinates (`SWARM_ID`), which
+add the shared-board tools + a collaboration prompt on top. A single run (a contract, no board
+env) gets the bare mission. The agent never acquires or releases — the launcher owns the lease.
+Hermetic: no broker, no docker — `sandbox()` is faked and the contract is a tmp file."""
 
 import types
 
 import pytest
 
 import dynamic_agent as da
+from swarm_eval.agent_runner import ENV_DEVICE_CONTRACT
 from swarm_eval.broker_client import Contract
 from swarm_eval.conductor import (
     ENV_AGENT_ID,
-    ENV_DEVICE_CONTRACT,
     ENV_ROLE,
     ENV_SWARM_ID,
     ENV_WORKER_IDS,
@@ -40,84 +40,40 @@ def _state():
 
 @pytest.fixture(autouse=True)
 def _clean_swarm_env(monkeypatch):
-    # keep every test starting from standalone mode unless it opts in
+    # keep every test starting from single mode unless it opts into the board coordinates
     for var in (ENV_DEVICE_CONTRACT, ENV_SWARM_ID, ENV_AGENT_ID, ENV_ROLE, ENV_WORKER_IDS):
         monkeypatch.delenv(var, raising=False)
 
 
-# ---- mode detection & contract sourcing ----------------------------------------------------
+# ---- swarm signal --------------------------------------------------------------------------
 
-def test_swarm_mode_is_off_by_default_and_on_with_device_contract(monkeypatch, tmp_path):
+def test_swarm_mode_is_off_by_default_and_on_with_the_board_coordinates(monkeypatch):
+    # the signal is SWARM_ID (the board coordinates), NOT DEVICE_CONTRACT (always set now)
     assert da.swarm_mode() is False
-    monkeypatch.setenv(ENV_DEVICE_CONTRACT, str(tmp_path / "worker-1.device"))
+    monkeypatch.setenv(ENV_DEVICE_CONTRACT, "/some/path.contract")
+    assert da.swarm_mode() is False  # a contract alone is a single run, not a swarm
+    monkeypatch.setenv(ENV_SWARM_ID, "swarm-abc")
     assert da.swarm_mode() is True
 
 
-def test_obtain_contract_standalone_acquires_and_owns_the_lease(monkeypatch):
-    monkeypatch.setattr(da, "acquire", lambda spec: CONTRACT)
-    state = _state()
-    got = da._obtain_contract("devices/rasp_dummy.yaml", state)
-    assert got == CONTRACT
-    assert state.metadata["device_owner"] == da.OWNER_SOLVER
-
-
-def test_obtain_contract_swarm_reads_injected_file_and_does_not_acquire(monkeypatch, tmp_path):
-    path = tmp_path / "worker-1.device"
-    path.write_text(CONTRACT_LINE + "\n")
-    monkeypatch.setenv(ENV_DEVICE_CONTRACT, str(path))
-
-    def _boom(spec):
-        raise AssertionError("swarm mode must not acquire — the launcher already did")
-
-    monkeypatch.setattr(da, "acquire", _boom)
-    state = _state()
-    got = da._obtain_contract("devices/rasp_dummy.yaml", state)
-    assert got == CONTRACT
-    assert state.metadata["device_owner"] == da.OWNER_LAUNCHER
-
-
-# ---- setup solver injects the contract in both modes ---------------------------------------
+# ---- setup solver reads the injected contract without acquiring (both modes) ----------------
 
 @pytest.mark.asyncio
-async def test_acquire_device_swarm_injects_contract_without_acquiring(monkeypatch, tmp_path):
+async def test_inject_device_swarm_reads_injected_contract_without_acquiring(monkeypatch, tmp_path):
     path = tmp_path / "worker-1.device"
     path.write_text(CONTRACT_LINE + "\n")
     monkeypatch.setenv(ENV_DEVICE_CONTRACT, str(path))
-    monkeypatch.setattr(da, "acquire", lambda spec: (_ for _ in ()).throw(AssertionError("no acquire")))
+    monkeypatch.setenv(ENV_SWARM_ID, "swarm-abc")  # swarm worker
     sbx = FakeSandbox()
     monkeypatch.setattr(da, "sandbox", lambda: sbx)
 
     state = _state()
-    await da.acquire_device("devices/rasp_dummy.yaml")(state, generate=None)
+    await da.inject_device()(state, generate=None)
 
     assert state.metadata["device"]["serial"] == "emulator-5554"
     assert "DEVICE_ADB_PORT=5555" in sbx.files[da.CONTRACT_PATH]
     assert "adb connect host.docker.internal:5555" in sbx.files[da.CONNECT_SCRIPT]
     assert ["chmod", "+x", da.CONNECT_SCRIPT] in sbx.execs
-
-
-# ---- teardown release honours the lease owner ----------------------------------------------
-
-@pytest.mark.asyncio
-async def test_release_device_skips_when_the_launcher_owns_the_lease(monkeypatch):
-    released = []
-    monkeypatch.setattr(da, "release", lambda serial: released.append(serial))
-    state = _state()
-    state.metadata["device"] = {"serial": "emulator-5554"}
-    state.metadata["device_owner"] = da.OWNER_LAUNCHER
-    await da.release_device(state)
-    assert released == []  # the Conductor releases it, not this run — no double-free
-
-
-@pytest.mark.asyncio
-async def test_release_device_releases_when_this_run_owns_the_lease(monkeypatch):
-    released = []
-    monkeypatch.setattr(da, "release", lambda serial: released.append(serial))
-    state = _state()
-    state.metadata["device"] = {"serial": "emulator-5554"}
-    state.metadata["device_owner"] = da.OWNER_SOLVER
-    await da.release_device(state)
-    assert released == ["emulator-5554"]
 
 
 # ---- collaboration prompt ------------------------------------------------------------------
@@ -134,10 +90,10 @@ def test_swarm_prompt_names_identity_peers_board_and_protocol():
 
 # ---- task wiring per mode ------------------------------------------------------------------
 
-def test_task_standalone_has_no_swarm_metadata():
+def test_task_single_has_no_swarm_metadata():
     t = da.dynamic_agent()
     assert t.metadata == {}
-    # standalone prompt is the bare mission — no collaboration protocol wrapper
+    # single prompt is the bare mission — no collaboration protocol wrapper
     assert "Collaboration protocol" not in t.dataset[0].input
 
 

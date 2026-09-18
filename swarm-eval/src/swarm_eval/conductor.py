@@ -28,20 +28,28 @@ same code path as N>1, not special-cased.
 from __future__ import annotations
 
 import logging
-import os
 import shutil
-import subprocess
 import time
-import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Callable
 
+from . import agent_runner
+from .agent_runner import (
+    DEFAULT_MODEL,
+    DEFAULT_TIME_LIMIT,
+    DEFAULT_WORKER_TASK,
+    ENV_INSPECT_LOG_DIR,
+    RunHandle,
+    RunSpec,
+    Runner,
+    mint_run_id,
+    swarm_eval_dir,
+)
+from .agent_runner import acquire as broker_acquire
+from .agent_runner import release as broker_release
 from .board_tools import ENV_AGENT_ID
 from .broker_client import DEFAULT_SPEC, Contract
-from .broker_client import acquire as broker_acquire
-from .broker_client import release as broker_release
 from .messageboard import (
     ENV_BOARD_DIR,
     ENV_SWARM_ID,
@@ -54,13 +62,13 @@ from .messageboard import (
 
 logger = logging.getLogger(__name__)
 
-# The launcher↔run injection contract: the env vars the Conductor sets per run, that each run's
-# task/solver reads. `ENV_BOARD_DIR`/`ENV_SWARM_ID` (the board's own, from messageboard) and
-# `ENV_AGENT_ID` (board_tools) are re-used; these are the swarm-launch additions.
+# The swarm-only slice of the launcher↔run injection contract: the board coordinates the
+# Conductor sets per worker on TOP of the shared per-run pair (`DEVICE_CONTRACT` +
+# `INSPECT_LOG_DIR`, owned by `agent_runner`). `ENV_BOARD_DIR`/`ENV_SWARM_ID` (the board's own,
+# from messageboard) and `ENV_AGENT_ID` (board_tools) are re-used; these are the swarm-launch
+# additions. Their presence (`SWARM_ID`) is what tells a run it is a swarm worker, not a single.
 ENV_ROLE = "ROLE"
-ENV_DEVICE_CONTRACT = "DEVICE_CONTRACT"  # dynamic roles only: path to the pre-acquired contract
 ENV_WORKER_IDS = "SWARM_WORKER_IDS"  # the worker roster, so a run knows its peers by name
-ENV_INSPECT_LOG_DIR = "INSPECT_LOG_DIR"  # Inspect reads this; all runs share logs/<swarm-id>/
 
 ROLE_WORKER = "worker"
 ROLE_ARBITER = "arbiter"  # the author the host-side arbiter stamps on its `done` verdict
@@ -69,34 +77,21 @@ ROLE_ARBITER = "arbiter"  # the author the host-side arbiter stamps on its `done
 SUCCESS = "SUCCESS"
 FAILURE = "FAILURE"
 
-# Defaults. The worker run is the ticket-04 dynamic agent (dual-mode: it reads DEVICE_CONTRACT
-# when the Conductor injects one). Cap mirrors the broker's POOL_CAP (the broker still enforces
-# the hard cap; this is the launcher's fail-fast courtesy). Model is the served provider model
-# the sandbox's keyless CC proxies to — a sweep is this one flag (spec S2).
-DEFAULT_WORKER_TASK = "dynamic_agent.py"
-DEFAULT_MODEL = "anthropic/claude-sonnet-4-5-20250929"
+# The device cap mirrors the broker's POOL_CAP (the broker still enforces the hard cap; this is
+# the launcher's fail-fast courtesy). The worker task, model, and per-run time-limit defaults are
+# the shared ones from `agent_runner` (re-exported above for `SwarmConfig`/tests).
 DEFAULT_CAP = 3
-# Per-run wall-clock cap (seconds), so termination layer (b) — "no run loops forever" — holds
-# by default, not only when an operator remembers the flag. Generous for a real human-in-the-loop
-# RASP-target attempt yet under the launcher `budget` so a run can't outlive the swarm.
-DEFAULT_TIME_LIMIT = 1800
 
 
 class SwarmError(RuntimeError):
     """A swarm run could not be set up (e.g. more workers than the device cap)."""
 
 
-def swarm_eval_dir() -> Path:
-    """The `swarm-eval/` project dir — cwd for the launched `inspect eval` subprocesses (the
-    task files live there). Derived from this module's location: src/swarm_eval/conductor.py."""
-    return Path(__file__).resolve().parents[2]
-
-
 def mint_swarm_id() -> str:
-    """A fresh, sortable, human-legible swarm id: `swarm-<utc>-<shortid>`. The stamp orders
-    swarm dirs chronologically under `ls`; the shortid keeps two same-second runs distinct."""
-    now = datetime.now(timezone.utc)
-    return f"swarm-{now:%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
+    """A fresh, sortable, human-legible swarm id: `swarm-<utc>-<shortid>` (via the shared
+    `mint_run_id`). The stamp orders swarm dirs chronologically; the shortid keeps two
+    same-second runs distinct."""
+    return mint_run_id("swarm")
 
 
 def worker_agent_id(i: int) -> str:
@@ -125,17 +120,6 @@ class SwarmConfig:
 
 
 @dataclass(frozen=True)
-class RunSpec:
-    """A single `inspect eval` subprocess to launch: its argv and the env vars injected on top
-    of the inherited environment (the runner merges `os.environ` under these)."""
-
-    agent_id: str
-    role: str
-    argv: list[str]
-    env: dict[str, str]
-
-
-@dataclass(frozen=True)
 class Verdict:
     """The swarm's outcome. `trigger` is the board index entry (a `success`) that decided a win,
     for the transcript; None for a loss."""
@@ -157,19 +141,6 @@ class SwarmResult:
     worker_ids: list[str]
 
 
-class RunHandle(Protocol):
-    """The slice of `subprocess.Popen` the Conductor drives — so tests inject a fake with no
-    real process."""
-
-    def poll(self) -> int | None: ...
-    def terminate(self) -> None: ...
-    def kill(self) -> None: ...
-    def wait(self, timeout: float | None = None) -> int: ...
-
-
-Runner = Callable[[RunSpec], RunHandle]
-
-
 def build_run_env(
     *,
     config: SwarmConfig,
@@ -180,40 +151,38 @@ def build_run_env(
     device_contract: Path | None = None,
     worker_ids: list[str] | None = None,
 ) -> dict[str, str]:
-    """The env injected into one run (merged over the inherited environment by the runner). Only
-    the swarm-launch vars — kept minimal so a test can assert the injection exactly."""
-    env = {
+    """The env injected into one worker run: the swarm-only board coordinates layered on top of
+    the shared per-run pair (`DEVICE_CONTRACT` + `INSPECT_LOG_DIR`) via `agent_runner`. The board
+    coordinates (`SWARM_ID` etc.) are the swarm signal a worker keys off; kept minimal so a test
+    can assert the injection exactly."""
+    board_env = {
         ENV_BOARD_DIR: str(config.board_root),
         ENV_SWARM_ID: swarm_id,
         ENV_AGENT_ID: agent_id,
         ENV_ROLE: role,
-        ENV_INSPECT_LOG_DIR: str(log_dir),
     }
-    if device_contract is not None:
-        env[ENV_DEVICE_CONTRACT] = str(device_contract)
     if worker_ids:
-        env[ENV_WORKER_IDS] = ",".join(worker_ids)
-    return env
+        board_env[ENV_WORKER_IDS] = ",".join(worker_ids)
+    if device_contract is None:
+        # A contract-less role (no device) still carries its log dir + the board coordinates.
+        return {ENV_INSPECT_LOG_DIR: str(log_dir), **board_env}
+    return agent_runner.build_run_env(
+        contract_path=device_contract, log_dir=log_dir, board_env=board_env
+    )
 
 
 def build_run_argv(*, config: SwarmConfig, task: str) -> list[str]:
-    """The `inspect eval` argv for one run. `-T spec=<yaml>` selects the worker's target (the
-    same device yaml the launcher pre-acquired), so the spawned `dynamic_agent` stages the right
-    APK(s) + mission (apk-agnostic refactor, ticket 02). Per-run limits (layer b) ride as CLI
-    flags; the log dir rides as `INSPECT_LOG_DIR` in the env, not a flag."""
-    argv = ["inspect", "eval", task, "-T", f"spec={config.spec}", "--model", config.model]
-    if config.time_limit is not None:
-        argv += ["--time-limit", str(config.time_limit)]
-    if config.message_limit is not None:
-        argv += ["--message-limit", str(config.message_limit)]
-    return argv
-
-
-def subprocess_runner(spec: RunSpec) -> subprocess.Popen:
-    """Default runner: launch the run as a real `inspect eval` subprocess in `swarm-eval/`, with
-    the injected env layered over the inherited one."""
-    env = {**os.environ, **spec.env}
-    return subprocess.Popen(spec.argv, cwd=str(swarm_eval_dir()), env=env)
+    """The `inspect eval` argv for one worker run — the shared `agent_runner` builder fed from
+    this swarm's config (target yaml + model + per-run limits). `-T spec=<yaml>` selects the
+    worker's target (the same device yaml the launcher pre-acquired) so the spawned
+    `dynamic_agent` stages the right APK(s) + mission (apk-agnostic refactor)."""
+    return agent_runner.build_run_argv(
+        spec=config.spec,
+        model=config.model,
+        task=task,
+        time_limit=config.time_limit,
+        message_limit=config.message_limit,
+    )
 
 
 def evaluate_board(entries: list[dict[str, str]], worker_ids: list[str]) -> Verdict | None:
@@ -264,7 +233,7 @@ class Conductor:
         self,
         config: SwarmConfig,
         *,
-        runner: Runner = subprocess_runner,
+        runner: Runner = agent_runner.subprocess_runner,
         acquire: Callable[[str], Contract] = broker_acquire,
         release: Callable[[str], None] = broker_release,
         clock: Callable[[], float] = time.monotonic,
@@ -338,12 +307,9 @@ class Conductor:
         for agent_id in worker_ids:
             contract = self._acquire(self.config.spec)
             acquired.append(contract.serial)
-            contract_path = log_dir / f"{agent_id}.device"
-            contract_path.write_text(contract.render_contract_line() + "\n", encoding="utf-8")
+            contract_path = agent_runner.write_contract(contract, log_dir / f"{agent_id}.device")
             specs.append(
                 RunSpec(
-                    agent_id=agent_id,
-                    role=ROLE_WORKER,
                     argv=build_run_argv(config=self.config, task=self.config.worker_task),
                     env=build_run_env(
                         config=self.config,

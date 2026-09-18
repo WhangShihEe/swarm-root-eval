@@ -1,15 +1,19 @@
-"""Ticket 04 — the control-plane wiring unique to the dynamic agent: the setup solver injects
-the contract into the sandbox and stashes the serial; teardown releases it (even with nothing
-stashed). Hermetic — `acquire`/`release`/`sandbox()` are faked, no broker, no docker."""
+"""Ticket 03 — the control-plane wiring unique to the dynamic agent: the setup solver reads the
+launcher-INJECTED device contract into the sandbox and stashes the serial, and fails fast when
+none was injected (the agent never leases a device itself; the launcher owns the lease and there
+is no release teardown). Hermetic — `sandbox()` is faked and the contract is a tmp file; no
+broker, no docker."""
 
 import types
 
 import pytest
 
 import dynamic_agent as da
+from swarm_eval.agent_runner import ENV_DEVICE_CONTRACT
 from swarm_eval.broker_client import Contract
 
 CONTRACT = Contract(serial="emulator-5554", console_port=5554, adb_port=5555, profile="writable-system")
+CONTRACT_LINE = CONTRACT.render_contract_line()
 
 
 class FakeSandbox:
@@ -25,7 +29,7 @@ class FakeSandbox:
 
 
 def _state():
-    # The solver/cleanup only touch state.metadata and state.output.completion.
+    # The solver only touches state.metadata; the scorer only state.output.completion.
     return types.SimpleNamespace(
         metadata={},
         output=types.SimpleNamespace(completion=""),
@@ -33,14 +37,15 @@ def _state():
 
 
 @pytest.mark.asyncio
-async def test_acquire_device_injects_contract_and_stashes_serial(monkeypatch):
+async def test_inject_device_stages_the_injected_contract_and_stashes_serial(monkeypatch, tmp_path):
+    path = tmp_path / "device.contract"
+    path.write_text(CONTRACT_LINE + "\n")
+    monkeypatch.setenv(ENV_DEVICE_CONTRACT, str(path))
     sbx = FakeSandbox()
-    monkeypatch.setattr(da, "acquire", lambda spec: CONTRACT)
     monkeypatch.setattr(da, "sandbox", lambda: sbx)
 
     state = _state()
-    solve = da.acquire_device("devices/rasp_dummy.yaml")
-    await solve(state, generate=None)
+    await da.inject_device()(state, generate=None)
 
     assert state.metadata["device"]["serial"] == "emulator-5554"
     assert da.CONTRACT_PATH in sbx.files
@@ -52,22 +57,14 @@ async def test_acquire_device_injects_contract_and_stashes_serial(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_release_device_releases_stashed_serial(monkeypatch):
-    released = []
-    monkeypatch.setattr(da, "release", lambda serial: released.append(serial))
-    state = _state()
-    state.metadata["device"] = {"serial": "emulator-5554"}
-    await da.release_device(state)
-    assert released == ["emulator-5554"]
-
-
-@pytest.mark.asyncio
-async def test_release_device_noop_when_nothing_acquired(monkeypatch):
-    # If setup failed before a grant, teardown must not try to release a phantom device.
-    released = []
-    monkeypatch.setattr(da, "release", lambda serial: released.append(serial))
-    await da.release_device(_state())
-    assert released == []
+async def test_inject_device_fails_fast_when_no_contract_injected(monkeypatch):
+    # Running `inspect eval dynamic_agent.py` directly (no launcher) has no DEVICE_CONTRACT set —
+    # the agent never leases a device itself, so setup must error clearly rather than proceed.
+    monkeypatch.delenv(ENV_DEVICE_CONTRACT, raising=False)
+    monkeypatch.setattr(da, "sandbox", lambda: (_ for _ in ()).throw(AssertionError("no sandbox")))
+    with pytest.raises(RuntimeError) as e:
+        await da.inject_device()(_state(), generate=None)
+    assert "single_agent.py or swarm.py" in str(e.value)
 
 
 @pytest.mark.asyncio

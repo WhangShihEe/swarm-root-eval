@@ -9,11 +9,11 @@ from pathlib import Path
 import pytest
 
 from swarm_eval import conductor as C
+from swarm_eval.agent_runner import ENV_DEVICE_CONTRACT
 from swarm_eval.broker_client import BrokerError, Contract, parse_contract
 from swarm_eval.conductor import (
     ENV_AGENT_ID,
     ENV_BOARD_DIR,
-    ENV_DEVICE_CONTRACT,
     ENV_INSPECT_LOG_DIR,
     ENV_ROLE,
     ENV_SWARM_ID,
@@ -115,10 +115,11 @@ class ExplodingRunner:
         self.handles: dict[str, FakeHandle] = {}
 
     def __call__(self, spec: C.RunSpec) -> FakeHandle:
-        if spec.agent_id == self.fail_agent:
-            raise RuntimeError(f"launch of {spec.agent_id} boom")
+        agent_id = spec.env[ENV_AGENT_ID]
+        if agent_id == self.fail_agent:
+            raise RuntimeError(f"launch of {agent_id} boom")
         h = FakeHandle()
-        self.handles[spec.agent_id] = h
+        self.handles[agent_id] = h
         return h
 
 
@@ -150,11 +151,12 @@ def make_runner(outcomes: dict[str, str], *, stubborn: set[str] | None = None):
     handles: list[FakeHandle] = []
 
     def runner(spec: C.RunSpec) -> FakeHandle:
-        kind = outcomes.get(spec.agent_id)
+        agent_id = spec.env[ENV_AGENT_ID]
+        kind = outcomes.get(agent_id)
         if kind:
             b = Board(board_dir(spec.env[ENV_BOARD_DIR], spec.env[ENV_SWARM_ID]))
-            b.post(author=spec.agent_id, subject=f"{spec.agent_id} {kind}", content="x", type=kind)
-        h = FakeHandle(stubborn=spec.agent_id in stubborn)
+            b.post(author=agent_id, subject=f"{agent_id} {kind}", content="x", type=kind)
+        h = FakeHandle(stubborn=agent_id in stubborn)
         handles.append(h)
         return h
 
@@ -378,9 +380,10 @@ def test_run_writes_a_parseable_device_contract_per_worker(tmp_path):
 
     def runner(spec: C.RunSpec) -> FakeHandle:
         # capture the injected DEVICE_CONTRACT path so we can assert its content post-run
-        seen[spec.agent_id] = spec.env[ENV_DEVICE_CONTRACT]
+        agent_id = spec.env[ENV_AGENT_ID]
+        seen[agent_id] = spec.env[ENV_DEVICE_CONTRACT]
         b = Board(board_dir(spec.env[ENV_BOARD_DIR], spec.env[ENV_SWARM_ID]))
-        b.post(author=spec.agent_id, subject="win", content="x", type="success")
+        b.post(author=agent_id, subject="win", content="x", type="success")
         return FakeHandle()
 
     result = _run(config, broker, runner, FakeClock())
@@ -435,7 +438,7 @@ def test_run_lets_a_worker_exit_cooperatively_before_terminating(tmp_path):
 
     def runner(spec: C.RunSpec) -> CooperativeHandle:
         Board(board_dir(spec.env[ENV_BOARD_DIR], spec.env[ENV_SWARM_ID])).post(
-            author=spec.agent_id, subject="win", content="x", type="success"
+            author=spec.env[ENV_AGENT_ID], subject="win", content="x", type="success"
         )
         return coop
 
