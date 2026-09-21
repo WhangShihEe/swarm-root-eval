@@ -42,6 +42,19 @@ def test_build_config_forwards_explicit_dirs(tmp_path):
     assert config.log_root == tmp_path / "l"
 
 
+def test_view_is_on_by_default(tmp_path):
+    # 05d: the webview auto-starts unless opted out; the port defaults to DEFAULT_VIEW_PORT.
+    config = cli.build_config(cli.parse_args([YAML]))
+    assert config.view is True
+    assert config.view_port == cli.DEFAULT_VIEW_PORT
+
+
+def test_no_view_flag_disables_the_webview_and_view_port_sets_the_port():
+    config = cli.build_config(cli.parse_args([YAML, "--no-view", "--view-port", "8123"]))
+    assert config.view is False
+    assert config.view_port == 8123
+
+
 class _FakeConductor:
     def __init__(self, verdict: Verdict, raises: Exception | None = None):
         self._verdict = verdict

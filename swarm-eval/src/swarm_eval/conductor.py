@@ -29,10 +29,11 @@ from __future__ import annotations
 
 import logging
 import shutil
+import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol
 
 from . import agent_runner
 from .agent_runner import (
@@ -92,6 +93,11 @@ DISPLAY_CONVERSATION = "conversation"
 # for the guaranteed-live view; one file per worker (own process) means no interleaving.
 CONSOLE_FILENAME = "console.out"
 
+# The auto-started webview server's own output (05d) lands here under the swarm log dir, so its
+# chatter stays off the launcher terminal (the 05c clean-terminal ethos) but is there to debug a
+# bind failure ("why didn't the viewer come up?").
+VIEW_LOG_FILENAME = "view.log"
+
 # A concrete port for the printed `inspect view` watch hint so the command is copy-pasteable (the
 # operator changes it if taken). A conductor-managed webview — injectable launcher + a configurable
 # `dashboard_port` — is deferred (05c Notes); the `.eval` files update live under the log dir, so
@@ -131,6 +137,8 @@ class SwarmConfig:
     budget: float = 3600.0  # launcher hard wall-clock: fail the swarm if no verdict by then
     grace: float = 30.0  # seconds a run gets to notice `done` and exit before it is killed
     poll_interval: float = 2.0  # how often the arbiter re-reads the board
+    view: bool = True  # auto-start the inspect webview over the logs (05d); --no-view opts out
+    view_port: int = DEFAULT_VIEW_PORT  # the auto-started webview's port
     board_root: Path = field(default_factory=lambda: swarm_eval_dir() / "board")
     log_root: Path = field(default_factory=lambda: swarm_eval_dir() / "logs")
 
@@ -242,9 +250,42 @@ def arbitrate(
         sleep(poll_interval)
 
 
+class ViewHandle(Protocol):
+    """The slice of the inspect-view subprocess the Conductor drives — so a test injects a fake
+    with no real server. Stopped (`terminate`) in the same `finally` that tears the swarm down."""
+
+    def poll(self) -> int | None: ...
+    def terminate(self) -> None: ...
+    def wait(self, timeout: float | None = None) -> int: ...
+
+
+# A view launcher turns (log_dir, port) into a running webview handle (05d). Injected like
+# `runner`, so the orchestration stays hermetic; the default below Popens the real `inspect view`.
+ViewLauncher = Callable[[Path, int], ViewHandle]
+
+
+def launch_inspect_view(log_dir: Path, port: int) -> subprocess.Popen:
+    """Start the read-only inspect webview over the swarm's live-updating `.eval` logs (05d):
+    `inspect view --log-dir <log_dir> --recursive --port <port>`, in `swarm-eval/`. `--recursive`
+    lists one entry per worker (the per-agent log dirs from 05c). Binds loopback, so it is reachable
+    at `http://localhost:<port>` with no auth flags. Its stdout+stderr go to `view.log` under the
+    swarm dir (keeps the launcher terminal clean; a bind failure is still there to read) — the
+    parent's copy of the file is closed right after spawn, the child keeps its dup. The Conductor
+    stops it in its `finally`."""
+    argv = ["inspect", "view", "--log-dir", str(log_dir), "--recursive", "--port", str(port)]
+    view_log = open(log_dir / VIEW_LOG_FILENAME, "w", encoding="utf-8")
+    try:
+        return subprocess.Popen(
+            argv, cwd=str(swarm_eval_dir()), stdout=view_log, stderr=subprocess.STDOUT
+        )
+    finally:
+        view_log.close()
+
+
 class Conductor:
-    """Runs one swarm. Inject `runner`/`acquire`/`release`/`clock`/`sleep` to exercise the whole
-    orchestration hermetically (no real subprocess, broker, or wall-clock)."""
+    """Runs one swarm. Inject `runner`/`acquire`/`release`/`clock`/`sleep`/`view_launcher` to
+    exercise the whole orchestration hermetically (no real subprocess, broker, wall-clock, or
+    webview server)."""
 
     def __init__(
         self,
@@ -255,6 +296,7 @@ class Conductor:
         release: Callable[[str], None] = broker_release,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
+        view_launcher: ViewLauncher = launch_inspect_view,
     ) -> None:
         self.config = config
         self._runner = runner
@@ -262,6 +304,7 @@ class Conductor:
         self._release = release
         self._clock = clock
         self._sleep = sleep
+        self._view_launcher = view_launcher
 
     def run(self) -> SwarmResult:
         cfg = self.config
@@ -284,6 +327,7 @@ class Conductor:
 
         acquired: list[str] = []  # serials to release at teardown (populated as we acquire)
         handles: list[RunHandle] = []
+        view_handle: ViewHandle | None = None  # the auto-started webview, stopped in the finally
         done_posted = False  # did the arbiter announce `done`? gates the cooperative-stop window
         logger.info("swarm %s: %d worker(s), board=%s", swarm_id, cfg.workers, board.path)
         try:
@@ -297,7 +341,7 @@ class Conductor:
             for spec in specs:
                 handles.append(self._runner(spec))
             logger.info("swarm %s: launched %d worker(s)", swarm_id, len(handles))
-            self._log_watch_hints(log_dir)
+            view_handle = self._start_watch_views(log_dir)
             # arbitrate: wait for a verdict (or the budget), then announce it so workers stop.
             verdict = arbitrate(
                 board,
@@ -312,8 +356,9 @@ class Conductor:
             logger.info("swarm %s: verdict %s — %s", swarm_id, verdict.value, verdict.reason)
             return SwarmResult(swarm_id, log_dir, board.path, verdict, worker_ids)
         finally:
-            # A failure at any step still releases devices and saves what exists.
+            # A failure at any step still releases devices, stops the webview, and saves what exists.
             self._shutdown(handles, cooperative=done_posted)
+            self._stop_view(view_handle)
             self._save_board(board, log_dir)
             self._release_all(acquired)
 
@@ -326,11 +371,21 @@ class Conductor:
         entry per worker) — its `INSPECT_LOG_DIR`, the `<agent-id>.device` contract injected as
         `DEVICE_CONTRACT`, and the `console.out` its stdout+stderr stream to (the live tail). The
         serial is recorded in `acquired` *before* the next acquire, so a mid-way failure still
-        releases every device already granted (the caller's `finally`)."""
+        releases every device already granted (the caller's `finally`).
+
+        Each `acquire` **blocks** while the broker cold-boots + provisions that device (up to its
+        900s timeout), so a per-device heartbeat is logged before and after each one (05d) —
+        otherwise the launcher looks hung for minutes with N workers."""
         specs: list[RunSpec] = []
-        for agent_id in worker_ids:
+        total = len(worker_ids)
+        for i, agent_id in enumerate(worker_ids, start=1):
+            logger.info("swarm %s: acquiring device %d/%d (booting + provisioning)…",
+                        swarm_id, i, total)
+            started = self._clock()
             contract = self._acquire(self.config.spec)
             acquired.append(contract.serial)
+            logger.info("swarm %s: %s ← %s (%.0fs)",
+                        swarm_id, agent_id, contract.serial, self._clock() - started)
             agent_log_dir = log_dir / agent_id
             contract_path = agent_runner.write_contract(contract, agent_log_dir / f"{agent_id}.device")
             specs.append(
@@ -350,14 +405,33 @@ class Conductor:
             )
         return specs
 
-    def _log_watch_hints(self, log_dir: Path) -> None:
-        """Print the two ways to watch the swarm (05c), both live-safe. The `tail -f` of the
-        per-worker console files is the guaranteed-live view (ANSI-free, per model turn); the
-        `inspect view` command serves the rich browser transcript over the live-updating `.eval`
-        logs (`--recursive` lists one entry per worker)."""
+    def _start_watch_views(self, log_dir: Path) -> ViewHandle | None:
+        """Surface the two ways to watch the swarm (05c/05d) and, by default, auto-start the
+        webview (05d). The `tail -f` of the per-worker console files is always printed — it is the
+        guaranteed-live view (ANSI-free, per model turn). The rich browser transcript over the
+        live-updating `.eval` logs is auto-started unless `--no-view`: on, the webview server is
+        launched and its URL printed (torn down in `run()`'s `finally`); off, the manual command is
+        printed instead (the 05c behaviour). Returns the server handle, or None when not started."""
         logger.info("swarm: watch (live tail): tail -f %s/*/%s", log_dir, CONSOLE_FILENAME)
-        logger.info("swarm: watch (webview):   inspect view --log-dir %s --recursive --port %d",
-                    log_dir, DEFAULT_VIEW_PORT)
+        if not self.config.view:
+            logger.info("swarm: watch (webview):   inspect view --log-dir %s --recursive --port %d",
+                        log_dir, self.config.view_port)
+            return None
+        handle = self._view_launcher(log_dir, self.config.view_port)
+        logger.info("swarm: webview → http://localhost:%d  (--no-view to skip; server log: %s)",
+                    self.config.view_port, log_dir / VIEW_LOG_FILENAME)
+        return handle
+
+    def _stop_view(self, view_handle: ViewHandle | None) -> None:
+        """Stop the auto-started webview server (05d). Best-effort: a failure is logged, never
+        raised — it must not mask the run error or block device release (like `_save_board`)."""
+        if view_handle is None:
+            return
+        try:
+            if view_handle.poll() is None:
+                view_handle.terminate()
+        except Exception as e:  # noqa: BLE001 — stopping the webview is best-effort
+            logger.warning("swarm: could not stop the inspect view server: %s", e)
 
     def _post_done(self, board: Board, verdict: Verdict) -> None:
         """Post the reserved `done` verdict as the arbiter. Posting through `Board` directly (not

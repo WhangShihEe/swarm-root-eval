@@ -27,6 +27,7 @@ from pathlib import Path
 from swarm_eval.conductor import (
     DEFAULT_CAP,
     DEFAULT_MODEL,
+    DEFAULT_VIEW_PORT,
     SUCCESS,
     Conductor,
     SwarmConfig,
@@ -47,6 +48,8 @@ def build_config(args: argparse.Namespace) -> SwarmConfig:
         budget=args.budget,
         grace=args.grace,
         poll_interval=args.poll_interval,
+        view=args.view,
+        view_port=args.view_port,
     )
     if args.board_dir is not None:
         kwargs["board_root"] = args.board_dir
@@ -74,6 +77,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="seconds a run gets to exit after `done` before it is killed (default 30)")
     p.add_argument("--poll-interval", type=float, default=2.0,
                    help="how often the arbiter re-reads the board, seconds (default 2)")
+    p.add_argument("--no-view", dest="view", action="store_false",
+                   help="don't auto-start the inspect webview; print the manual command instead")
+    p.add_argument("--view-port", type=int, default=DEFAULT_VIEW_PORT,
+                   help=f"port for the auto-started inspect webview (default {DEFAULT_VIEW_PORT})")
     p.add_argument("--board-dir", type=Path, default=None,
                    help="board root (default swarm-eval/board); the board is <root>/<swarm-id>/")
     p.add_argument("--log-dir", type=Path, default=None,

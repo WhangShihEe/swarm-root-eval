@@ -13,6 +13,7 @@ from swarm_eval.agent_runner import ENV_DEVICE_CONTRACT
 from swarm_eval.broker_client import BrokerError, Contract, parse_contract
 from swarm_eval.conductor import (
     CONSOLE_FILENAME,
+    DEFAULT_VIEW_PORT,
     DISPLAY_CONVERSATION,
     ENV_AGENT_ID,
     ENV_BOARD_DIR,
@@ -167,6 +168,37 @@ def make_runner(outcomes: dict[str, str], *, stubborn: set[str] | None = None):
     return runner
 
 
+class FakeViewHandle:
+    """A stand-in inspect-view server handle: `terminate` marks it stopped (05d)."""
+
+    def __init__(self) -> None:
+        self._code: int | None = None
+        self.terminated = False
+
+    def poll(self) -> int | None:
+        return self._code
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self._code = -15
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self._code if self._code is not None else 0
+
+
+class FakeViewLauncher:
+    """Records each `(log_dir, port)` it is asked to launch and hands back one `FakeViewHandle`,
+    so a hermetic run() never spawns a real webview server."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[Path, int]] = []
+        self.handle = FakeViewHandle()
+
+    def __call__(self, log_dir: Path, port: int) -> FakeViewHandle:
+        self.calls.append((log_dir, port))
+        return self.handle
+
+
 def cfg(tmp_path: Path, **kw) -> SwarmConfig:
     base = dict(
         board_root=tmp_path / "board",
@@ -179,7 +211,10 @@ def cfg(tmp_path: Path, **kw) -> SwarmConfig:
     return SwarmConfig(**base)
 
 
-def _run(config: SwarmConfig, broker: FakeBroker, runner, clock: FakeClock) -> C.SwarmResult:
+def _run(
+    config: SwarmConfig, broker: FakeBroker, runner, clock: FakeClock, view_launcher=None
+) -> C.SwarmResult:
+    # Inject a fake view launcher so the default view=True never spawns a real `inspect view`.
     return Conductor(
         config,
         runner=runner,
@@ -187,6 +222,7 @@ def _run(config: SwarmConfig, broker: FakeBroker, runner, clock: FakeClock) -> C
         release=broker.release,
         clock=clock,
         sleep=clock.sleep,
+        view_launcher=view_launcher or FakeViewLauncher(),
     ).run()
 
 
@@ -546,3 +582,76 @@ def test_shutdown_kills_the_process_group_not_the_lone_process(tmp_path):
     _run(config, broker, runner, FakeClock())
     assert h.calls == ["terminate_group", "kill_group"]  # group-level escalation (layers a→c)
     assert "terminate" not in h.calls and "kill" not in h.calls  # never the lone-process signal
+
+
+# ---- 05d: auto-started webview + acquire progress heartbeat ---------------------------------
+
+def test_run_auto_starts_the_webview_and_stops_it_on_teardown(tmp_path):
+    # 05d: with view on (the default), the Conductor starts the webview over the swarm log dir at
+    # the configured port, and stops it in the finally (no orphaned `inspect view`).
+    config = cfg(tmp_path, workers=1, view=True, view_port=9911)
+    broker = FakeBroker()
+    view = FakeViewLauncher()
+    result = _run(config, broker, make_runner({"worker-1": "success"}), FakeClock(), view_launcher=view)
+    assert view.calls == [(result.log_dir, 9911)]  # launched once, over the swarm log dir + port
+    assert view.handle.terminated  # torn down in the finally
+
+
+def test_run_no_view_launches_no_server(tmp_path):
+    # 05d: --no-view (view=False) prints the manual hint and starts nothing.
+    config = cfg(tmp_path, workers=1, view=False)
+    broker = FakeBroker()
+    view = FakeViewLauncher()
+    _run(config, broker, make_runner({"worker-1": "success"}), FakeClock(), view_launcher=view)
+    assert view.calls == []  # nothing launched
+
+
+def test_run_stops_the_webview_even_when_the_swarm_fails(tmp_path):
+    # The webview is stopped in the same finally as device release, so a failure teardown still
+    # reaps it (best-effort, like the board save).
+    config = cfg(tmp_path, workers=1, view=True)
+    broker = FakeBroker()
+    view = FakeViewLauncher()
+    runner = make_runner({})  # no verdict → budget timeout → FAILURE, but the run still tears down
+    result = _run(config, broker, runner, FakeClock(), view_launcher=view)
+    assert result.verdict.value == "FAILURE"
+    assert len(view.calls) == 1 and view.handle.terminated
+
+
+def test_launch_inspect_view_builds_the_argv_and_redirects_to_view_log(tmp_path, monkeypatch):
+    # The default (non-injected) launcher runs the exact inspect-view command and sends the
+    # server's output to view.log under the swarm dir (keeps the terminal clean).
+    from swarm_eval.conductor import VIEW_LOG_FILENAME, launch_inspect_view
+
+    captured: dict = {}
+
+    def fake_popen(argv, cwd=None, stdout=None, stderr=None):
+        captured.update(argv=argv, stdout_name=getattr(stdout, "name", None), stderr=stderr)
+
+        class _P:
+            pid = 321
+
+            def poll(self):
+                return None
+
+        return _P()
+
+    monkeypatch.setattr(C.subprocess, "Popen", fake_popen)
+    launch_inspect_view(tmp_path, 9911)
+    assert captured["argv"] == [
+        "inspect", "view", "--log-dir", str(tmp_path), "--recursive", "--port", "9911",
+    ]
+    assert captured["stdout_name"] == str(tmp_path / VIEW_LOG_FILENAME)
+    assert captured["stderr"] is C.subprocess.STDOUT
+
+
+def test_run_logs_acquire_progress_per_device(tmp_path, caplog):
+    # 05d: a heartbeat line per device so the launcher isn't silent during the blocking acquires.
+    import logging
+    config = cfg(tmp_path, workers=2)
+    broker = FakeBroker()
+    with caplog.at_level(logging.INFO, logger="swarm_eval.conductor"):
+        _run(config, broker, make_runner({"worker-1": "success", "worker-2": "success"}), FakeClock())
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("acquiring device 1/2" in m for m in msgs)
+    assert any("acquiring device 2/2" in m for m in msgs)
