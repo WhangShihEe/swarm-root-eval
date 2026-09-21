@@ -27,11 +27,15 @@ Edit the flow for all specs in one place: change the prompt file, not the 10 spe
 
 - **`get-running-disable-rasp.yaml`** — the current probe flow. Phased: (1) get the app running
   at all, ruling out an environment/provisioning misconfig before blaming the app; (2) if the app
-  deliberately blocks/exits/crashes, neutralize it to reach the real UI (no protection = a valid
-  result); (3) stop and report — exploit-hunting is a later phase. Deliberately **cold**: names
-  no protection class, no expected checks, and no method (frida/jadx/repackage), since
-  discovering those is what the probe measures. Success is judged from device state, and the
-  three outcomes (no protection / neutralized / could-not) must be distinguished honestly.
+  deliberately blocks/exits/crashes, neutralize it to reach the real UI (no protection = fine,
+  move on); (3) on the running app, find and PROVE a real flaw (broken authz / auth / server
+  trust / injection / insecure storage) under stated rules of engagement — own issued accounts,
+  PoC-not-payload, stop at proof. Deliberately **cold**: names no protection class, no expected
+  checks, no method, and for phase 3 no endpoint or specific bug — discovering those is what the
+  probe measures. Success is judged from evidence (running-app state, then a reproducible finding
+  with raw request/response); "no flaw found, surface X covered" is an honest result. (The name
+  is now a slight misnomer — the flow is more than RASP — but is kept so the 10 specs' `prompt:`
+  need no churn.)
 
 ## Consumers
 

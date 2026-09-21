@@ -24,3 +24,14 @@ app:
   # launch_activity omitted — the agent discovers it from the manifest.
   frida_mode: spawn               # runtime mode only; injects no method text into the prompt
   prompt: get-running-disable-rasp   # shared mission slots (objective/success_signal/details)
+
+  # --- App-specific colour appended onto the shared prompt's phase-3 slot (target.py::slot).
+  # The shared flow already carries phases 1-3 + the rules of engagement; this only adds the facts
+  # unique to parking. `_append` concatenates without restating the whole slot; other specs need
+  # no such append.
+  objective_append: |-
+    App-specific notes for this target: Parking.sg ships with no anti-root/RASP, so phases 1-2 are
+    typically no-ops here — expect to spend your effort on phase 3. Its backend IS in authorized
+    scope for this assessment. Concretely, a paid action recorded without a matching payment (a
+    parking session shown active for free), or reading another motorist's session / vehicle /
+    payment records, is exactly the Confidentiality/Integrity finding to prove.

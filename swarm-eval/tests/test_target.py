@@ -149,3 +149,50 @@ def test_load_target_missing_target_apk_raises(tmp_path):
     spec.write_text("app:\n  package: com.example.x\n", encoding="utf-8")
     with pytest.raises(ValueError, match="target_apk"):
         load_target(spec)
+
+
+def test_slot_append_concatenates_onto_shared(tmp_path):
+    # A per-app `<slot>_append` adds text onto the SHARED prompt's slot without restating it:
+    # the shared base survives and the extra lands after it, separated by a blank line.
+    spec = tmp_path / "appended.yaml"
+    spec.write_text(
+        "target_apk: apks/rasp_dummy/rasp_dummy.apk\n"
+        "app:\n"
+        "  package: com.example.x\n"
+        "  prompt: get-running-disable-rasp\n"
+        "  objective_append: |-\n"
+        "    EXTRA-PHASE-3 marker.\n",
+        encoding="utf-8",
+    )
+    t = load_target(spec)
+    assert "phases" in t.objective.lower()          # shared base still present (append, not override)
+    assert t.objective.rstrip().endswith("EXTRA-PHASE-3 marker.")
+    assert "\n\nEXTRA-PHASE-3 marker." in t.objective   # appended after base, blank-line separated
+
+
+def test_slot_append_stacks_on_inline_override(tmp_path):
+    # `_append` concatenates onto whichever base won — including an inline full override.
+    spec = tmp_path / "override_plus_append.yaml"
+    spec.write_text(
+        "target_apk: apks/rasp_dummy/rasp_dummy.apk\n"
+        "app:\n"
+        "  package: com.example.x\n"
+        "  objective: BASE-OBJ\n"
+        "  objective_append: ADDED\n",
+        encoding="utf-8",
+    )
+    assert load_target(spec).objective == "BASE-OBJ\n\nADDED"
+
+
+def test_parking_sg_inherits_phase3_and_appends_colour():
+    # The real parking spec: phase 3 + ROE now come from the SHARED prompt; the spec only appends
+    # app-specific colour. Both must be present and coherent.
+    t = load_target("devices/parking_sg.yaml")
+    assert "phases" in t.objective.lower()                 # shared phased flow
+    assert "Rules of engagement" in t.objective            # ROE from the shared prompt
+    assert "PROVE" in t.objective                          # phase 3 is in the shared flow now
+    assert "motorist" in t.objective                       # parking-specific append landed
+    assert t.objective.rstrip().endswith("finding to prove.")
+    # success bar comes wholly from the shared prompt (no per-app success append anymore)
+    assert "success_signal_append" not in (_ROOT / "devices" / "parking_sg.yaml").read_text()
+    assert "reproducible" in t.success_signal and "dumpsys" in t.success_signal

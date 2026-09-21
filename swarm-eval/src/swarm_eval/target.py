@@ -33,7 +33,8 @@ DEFAULT_FRIDA_MODE = "attach"
 # Shared mission prompts live here (repo-relative). Instead of inlining the three mission slots,
 # a spec's app: block may set `prompt: <name>`; the slots are then read from
 # `devices/prompts/<name>.yaml`, so one flow is authored once and reused across many specs. Any
-# inline app: key still overrides the shared file field-by-field.
+# inline app: key overrides the shared file field-by-field, and an inline `<slot>_append`
+# concatenates onto that slot (see load_target.slot).
 PROMPTS_DIR = "devices/prompts"
 PROMPT_FIELDS = ("objective", "success_signal", "details")
 
@@ -135,12 +136,21 @@ def load_target(spec: str | Path) -> TargetConfig:
     app: dict[str, Any] = data.get("app") or {}
 
     # A spec may pull the mission slots from a shared `devices/prompts/<name>.yaml` via `prompt:`;
-    # an inline app: key overrides the shared file slot-by-slot (inline wins, else shared, else "").
+    # an inline app: key overrides the shared file slot-by-slot (inline wins, else shared, else ""),
+    # and an inline `<slot>_append` concatenates extra per-app text onto whichever base won.
     shared = _load_prompt(root, app["prompt"]) if app.get("prompt") else {}
 
     def slot(key: str) -> Any:
-        v = app.get(key)
-        return v if v is not None else shared.get(key)
+        # inline `<key>` fully overrides the shared file; else the shared slot; else "".
+        base = app[key] if app.get(key) is not None else shared.get(key)
+        # a per-app inline `<key>_append` concatenates onto whichever base won, so a spec can add
+        # app-specific mission text (an extra phase, ROE, app colour) WITHOUT restating the whole
+        # shared slot. `_append` keys are inline-only — never read from the shared prompt file
+        # (PROMPT_FIELDS), since an append is by definition per-app, not part of the shared flow.
+        extra = app.get(f"{key}_append")
+        if extra is not None:
+            base = f"{base}\n\n{extra}" if base else extra
+        return base
 
     return TargetConfig(
         spec_path=spec_path,
