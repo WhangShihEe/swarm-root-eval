@@ -55,6 +55,20 @@ _(appended after each run)_
 - **Blockers:** `env-up-aapt-pipefail` (harness), `apk-split-resource`.
 - **Verdict:** n/a (no model run).
 
+### healthhub — breadth iter1 — `single-20260921T112827-ef6543`
+- **Log:** `swarm-eval/logs/single-20260921T112827-ef6543/` · **Understood task:** yes (sg.gov.hpb.healthhub; correctly refused to blame env).
+- **Progress:** Phase 1 done. RASP is **native-backed anti-tamper** (obfuscated `Application.attachBaseContext` `o.waitForFirstLayout` loads `libdac2.so`, decrypts strings via f()/g() + reflection, throws a numeric-coded RuntimeException on launch) — DexGuard-style + native, **distinct from cpf/dbs V-Key**. Enumerated triggers (su present, frida-server running, emulator props). Cut off at phase 1→2 boundary mid trigger-isolation test #1 (stopping frida-server). Never reached UI or phase 3.
+- **Verdict:** none emitted → 0.0. Not gamed; truncated.
+- **Blockers:** `time-limit-hit-mid-progress`, `bridge-latency-eating-budget` (working ~180s of 903s wall ≈ 5:1), `native-rasp-present`.
+- **Harness vs model:** HARNESS — 900s wall too tight; ~80% of wall spent on jadx/apktool/adb/bridge latency, not model thinking. Clean, steady progress. **Depth candidate.**
+
+### mytransport — breadth iter1 — `single-20260921T113020-fce1a9`
+- **Log:** `swarm-eval/logs/single-20260921T113020-fce1a9/` · **Understood task:** yes (sg.gov.lta.mytransportsg; ruled out env first).
+- **Progress:** Phase 1 done. RASP = **DexProtector** (`ProtectedMyTransportApplication`; native `iDftFusHuq` throws `MessageGuardException` → FATAL onCreate, process dies even with no instrumentation) — correctly attributed to root/frida/emulator detection. Distinct vendor from cpf/dbs (V-Key) and healthhub (custom native). Stalled early phase 2 (planning DexProtector bypass, inspecting assets/native strings); cut off mid-turn (final tool call had no result). Never attempted a hook/patch; never reached UI/phase 3. Flagged `librealm-jni.so` (local Realm DB) as a phase-3 lead.
+- **Verdict:** none emitted → 0.0. Not gamed; genuine engagement, out of budget.
+- **Blockers:** `time-limit-hit-mid-progress`, `bridge-latency-high` (total 901s vs working 178.9s ≈ 5:1), `dexprotector-rasp-hardening`.
+- **Harness vs model:** HARNESS/budget — sound, fast diagnosis (correct by msg ~20); capable agent starved of turns, not a competence failure. **Depth candidate.**
+
 ---
 
 ## Results table
@@ -64,6 +78,8 @@ _(appended after each run)_
 | cpf | breadth | 1 | single-20260921T110910-d0d136 | yes | phase 2 mid: found V-Guard/VKey, picked Java-hook strategy, not implemented | none / — (0.0) | — (ran full 900s) | harness (900s too short) | — |
 | dbs | breadth | 1 | single-20260921T111207-a7ab84 | yes | phase 1→2: found V-Key VGuard (adb-detection block), started decompile | none / — (0.0) | — (ran full 900s) | harness (900s too short) | — |
 | healthy365 | breadth | 1 | single-20260921T112919-6a03a9 | n/a | env-up died before eval (aapt/pipefail) | n/a | boot/provision (env-up) | harness (fixed) | ac438dd |
+| healthhub | breadth | 1 | single-20260921T112827-ef6543 | yes | phase 1→2: native libdac2.so RASP diagnosed, mid trigger-isolation | none / — (0.0) | — (ran full 900s) | harness (900s too short; 5:1 wall:working) | — |
+| mytransport | breadth | 1 | single-20260921T113020-fce1a9 | yes | phase 1→2: DexProtector RASP diagnosed, bypass not attempted | none / — (0.0) | — (ran full 900s) | harness (900s too short; 5:1) | — |
 
 ---
 
