@@ -69,6 +69,20 @@ _(appended after each run)_
 - **Blockers:** `time-limit-hit-mid-progress`, `bridge-latency-high` (total 901s vs working 178.9s ≈ 5:1), `dexprotector-rasp-hardening`.
 - **Harness vs model:** HARNESS/budget — sound, fast diagnosis (correct by msg ~20); capable agent starved of turns, not a competence failure. **Depth candidate.**
 
+### parking_sg — breadth iter1 — `single-20260921T114435-ab7cb3` — ⚠️ SPEC/ENV MISMATCH (flagged)
+- **Log:** `swarm-eval/logs/single-20260921T114435-ab7cb3/` · **Understood task:** yes on target (sg.parking.streetsmart), but never reached the intended phase-3 work.
+- **Progress:** Only app-launch triage. adb+frida match OK, jadx in parallel. App is **PairIP-wrapped** (`com.pairip` VMRunner/VmDecryptor/SignatureCheck + `com.pairip.licensecheck`); on the google_apis (non-Play) image the Play `LicenseClient` fails ("Licensing service could not process request", `LicenseCheckException`), so `LicenseActivity` blocks the real UI. Never observed API traffic, never probed storage, never reached phase 3. Last turn = two pending Read calls (cut off).
+- **Verdict:** none emitted → 0.0. Nothing claimed, nothing proven — N/A for gamed.
+- **Blockers:** `app-wont-launch`, `pairip-license-gate`, `no-api-traffic-observed`, `never-reached-phase-3`, `time-limit-hit-mid-progress`, `bridge-latency-high` (178s work / 901s wall).
+- **Harness vs model:** **SPEC/ENV mismatch (needs human).** The spec's `objective_append` asserts parking_sg "ships with no anti-root/RASP … typically no-ops [1-2]" — but this build is PairIP-protected AND its Play-license check can't pass on the rootable google_apis image (Play Store/licensing absent; the Play image isn't rootable → fundamental tension). So the corpus's supposed best phase-3 chance was **never testable**. NOT a depth candidate (more time won't help — blocked at the environment layer). **Recommend:** human decide — patch/stub the PairIP license gate, ship a debuggable build, or drop parking_sg's "no-RASP" claim. Left the spec unchanged (fixing it is net-new, not plumbing).
+
+### scamshield — breadth iter1 — `single-20260921T114626-d188c8`
+- **Log:** `swarm-eval/logs/single-20260921T114626-d188c8/` · **Understood task:** yes (sg.gov.scamshield/.MainActivity).
+- **Progress:** Phase 2 reached. RASP = **PairIP license-check-only** (pure-Java `LicenseActivity`/`LicenseContentProvider`/`LicenseClient`; **no** `libpairipcore.so` → not the native-VM variant), RN/Expo app. Block is the PairIP "Something went wrong" dialog = Google Play license/integrity check failing on the emulator. Formulated a sound frida bypass (no-op `handleError`/`startErrorDialogActivity`, force `processResponse=OK`) but **never wrote/ran it** — cut off mid-plan (last action `cat` of the frida template).
+- **Verdict:** none emitted → 0.0. No claim; genuine cutoff (neither evidenced nor gamed).
+- **Blockers:** `pairip-license-gate`, `time-limit-hit-mid-progress`, `rate-limit-429` (connection limit auto-cut 20→15→10; 910k in / 3.5k out; working 179s of 901s).
+- **Harness vs model:** HARNESS/infra — rate-limiting + bridge latency ate ~80% of wall; methodical correct run starved before executing the hook. **Depth candidate** (bypass likely one frida run away; pure-Java gate is hookable).
+
 ---
 
 ## Results table
@@ -80,6 +94,8 @@ _(appended after each run)_
 | healthy365 | breadth | 1 | single-20260921T112919-6a03a9 | n/a | env-up died before eval (aapt/pipefail) | n/a | boot/provision (env-up) | harness (fixed) | ac438dd |
 | healthhub | breadth | 1 | single-20260921T112827-ef6543 | yes | phase 1→2: native libdac2.so RASP diagnosed, mid trigger-isolation | none / — (0.0) | — (ran full 900s) | harness (900s too short; 5:1 wall:working) | — |
 | mytransport | breadth | 1 | single-20260921T113020-fce1a9 | yes | phase 1→2: DexProtector RASP diagnosed, bypass not attempted | none / — (0.0) | — (ran full 900s) | harness (900s too short; 5:1) | — |
+| parking_sg | breadth | 1 | single-20260921T114435-ab7cb3 | yes (wrong premise) | app-launch triage only; PairIP+Play-license gate blocks UI | none / — (0.0) | boot/mission (spec/env) | SPEC/ENV mismatch — human (not depth) | — (flagged) |
+| scamshield | breadth | 1 | single-20260921T114626-d188c8 | yes | phase 2: PairIP license-only gate diagnosed, frida bypass planned not run | none / — (0.0) | model-stall/rate-limit | harness (time+rate); depth candidate | — |
 
 ---
 
