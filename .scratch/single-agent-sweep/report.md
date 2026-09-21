@@ -165,6 +165,15 @@ Motivation: breadth proved the 900s **wall** budget was ~80% rate-limit backoff 
 - **Blockers:** `frida-run-spawn-freeze` (`frida -f` / `do_freezer_trap` — the proximate blocker), `working-limit-hit-mid-progress`, `adb-debugging-detected`. NOT `frida-detection-by-rasp`, NOT emulator-fingerprint (neither tripped here).
 - **Does dbs confirm cpf's V-Key wall? NO — it DIFFERS.** cpf hit a hard native anti-frida SIGSEGV; **dbs's V-Key deployment did not** — frida hooked cleanly. dbs's failure was **tooling (frida `-f` spawn-freeze) + budget**, not V-Key anti-instrumentation. **Closest a V-Key target came to a bypass**: a correct minimal hook was loaded; launch-then-attach (its own final plan) instead of `frida -f` plausibly clears the block in budget. **V-Key hardness is deployment-specific.**
 
+### healthhub — depth iter2 — `single-20260921T163803-52eee6` — DexGuard ThreatCast (wall-leaning)
+- **Budget:** working_time **601s / 600** (hit), total 2888s. Mild 429s (~4). 48 assistant turns.
+- **What the extra budget bought:** authored+ran multiple frida agents vs `libdac2.so` — hooked `attachBaseContext` (`o.waitForFirstLayout` + real Application `o.LazySemanticsKt`) to swallow the RuntimeException; native-primitive probes (`__system_property_get`/file-opens). Decompiled (jadx+smali), read the packed 41KB JNI_OnLoad, traced throw sites (44240087 at 10213/10611/10625). Did NOT repackage (confirmed sig intact / not needed).
+- **★ Reclassification:** the breadth "custom native anti-tamper" is actually **Guardsquare DexGuard ThreatCast** (`com.guardsquare.dexguard.runtime.threatcast.ThreatCast.xml` + pubkey/serial blacklist) — a **commercial** RASP. APK is **unmodified/original-signed**, so the trigger is purely **runtime env** (root/emulator/frida; native probed `vendor_qemu_prop`), NOT tamper.
+- **How far:** Phase 2, no UI. Every spawn died at `attachBaseContext` throwing `44240087`. Two blockers: (i) naive swallow left the app **half-initialized** (skipped the reflected `Method.invoke` real-init → retry loop → death) — a genuine difficulty; (ii) **`frida-run` detached before the hook fired** (premature `done` → hook removed) — the SAME teardown bug that hit scamshield/dbs. Cut off mid-analysis planning the fixed swallow.
+- **Verdict:** none emitted → 0.0. Honest, evidenced (device/sig/xml).
+- **Blockers:** `custom-native-antitamper` (→ commercial DexGuard ThreatCast), `frida-run-spawn-freeze`, `emulator-fingerprint-trigger`, `frida-detection-by-rasp` (suspected), `working-limit-hit-mid-progress`.
+- **Harness vs model:** **Wall-leaning** (closer to V-Key/DexProtector than the light RN RASPs). Decided by tooling (frida-run teardown) + 600s budget + genuine swallow-plus-preserve-init difficulty; diagnosis/strategy were correct. Emulator qemu props are a trigger (like DexProtector).
+
 ---
 
 ## Results table
@@ -187,6 +196,7 @@ Motivation: breadth proved the 900s **wall** budget was ~80% rate-limit backoff 
 | cpf | **depth** | 2 | single-20260921T143803-6dec59 | yes | root-caused V-Key 2-layer defense (soft root/emu + hard anti-frida SIGSEGV); authored maps-sanitizer, never ran | none / — (0.0) | RASP hardness (capability wall) | model correct strategy, V-Key resisted | working-limit |
 | mytransport | **depth** | 2 | single-20260921T152319-ff9f28 | yes | ran 6 bypass attempts vs DexProtector; proved emulator (not su) is the trigger; no UI | none / — (0.0) | RASP hardness + emulator-detectability | model correct; env+RASP wall | working-limit |
 | dbs | **depth** | 2 | single-20260921T155737-b25a2e | yes | root-caused adb-detection (ex.e.f/i/j), authored+loaded correct hook; frida -f froze app so hook never fired | none / — (0.0) | tooling (frida-run spawn-freeze) | model correct; V-Key hookable here (unlike cpf) | working-limit |
+| healthhub | **depth** | 2 | single-20260921T163803-52eee6 | yes | ID'd DexGuard ThreatCast; ran attachBaseContext swallow hooks; half-init + frida-run detach → no UI | none / — (0.0) | RASP hardness + frida-run tooling | model correct; wall-leaning | working-limit |
 
 ---
 
