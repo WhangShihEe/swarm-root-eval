@@ -22,6 +22,7 @@ nothing about it beyond accepting an opaque `board_env` dict to merge.
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import uuid
 from dataclasses import dataclass
@@ -68,23 +69,32 @@ def mint_run_id(prefix: str) -> str:
 
 @dataclass(frozen=True)
 class RunSpec:
-    """One `inspect eval` subprocess to launch: its argv and the env vars injected on top of the
-    inherited environment (the runner merges `os.environ` under these). The launch unit both
-    entrypoints hand to a runner — the agent's identity, when it has one, rides inside `env`
-    (`AGENT_ID`), not as a field, so this stays the minimal thing a runner needs."""
+    """One `inspect eval` subprocess to launch: its argv, the env vars injected on top of the
+    inherited environment (the runner merges `os.environ` under these), and — for a swarm worker —
+    where to redirect its merged stdout+stderr. The launch unit both entrypoints hand to a
+    runner — the agent's identity, when it has one, rides inside `env` (`AGENT_ID`), not as a
+    field, so this stays the minimal thing a runner needs.
+
+    `console_path` is the 05c switch: when set (the conductor's per-worker `console.out`), the
+    runner detaches the run into its own session/process group and streams its output to that file
+    (the live tail); when None (single_agent, still attached to the launcher's tty), the run
+    inherits the launcher's stdout/stderr and process group unchanged."""
 
     argv: list[str]
     env: dict[str, str]
+    console_path: Path | None = None
 
 
 class RunHandle(Protocol):
-    """The slice of `subprocess.Popen` a launcher drives — so tests inject a fake with no real
-    process. `single_agent` only needs `wait`; the conductor also terminates/kills stragglers."""
+    """The slice of a launched run a launcher drives — so tests inject a fake with no real process.
+    `single_agent` only needs `wait`; the conductor also winds stragglers down. Teardown is at the
+    **process-group** level (`terminate_group`/`kill_group`), not the lone `inspect` parent, so a
+    detached worker's grandchildren (adb, frida, docker, the emulator bridge) die with it (05c)."""
 
     def poll(self) -> int | None: ...
-    def terminate(self) -> None: ...
-    def kill(self) -> None: ...
     def wait(self, timeout: float | None = None) -> int: ...
+    def terminate_group(self) -> None: ...
+    def kill_group(self) -> None: ...
 
 
 Runner = Callable[[RunSpec], RunHandle]
@@ -97,17 +107,40 @@ def build_run_argv(
     task: str = DEFAULT_WORKER_TASK,
     time_limit: int | None = None,
     message_limit: int | None = None,
+    display: str | None = None,
 ) -> list[str]:
     """The `inspect eval` argv for one run. `-T spec=<yaml>` selects the target (the same device
     yaml the launcher pre-acquired), so the spawned `dynamic_agent` stages the right APK(s) +
     mission (apk-agnostic refactor). Per-run limits (termination layer b) ride as CLI flags; the
-    log dir rides as `INSPECT_LOG_DIR` in the env, not a flag."""
+    log dir rides as `INSPECT_LOG_DIR` in the env, not a flag. `display` selects Inspect's UI —
+    the conductor passes `conversation` (05c) so each worker streams an ANSI-free transcript to its
+    console file instead of painting a fullscreen curses TUI over the terminal; None leaves
+    Inspect's default (the fullscreen TUI, fine for a lone single_agent run)."""
     argv = ["inspect", "eval", task, "-T", f"spec={spec}", "--model", model]
+    argv += _provider_model_args(model)
     if time_limit is not None:
         argv += ["--time-limit", str(time_limit)]
     if message_limit is not None:
         argv += ["--message-limit", str(message_limit)]
+    if display is not None:
+        argv += ["--display", display]
     return argv
+
+
+def _provider_model_args(model: str) -> list[str]:
+    """Provider-specific `-M key=value` model args a served model needs to work behind the bridge.
+
+    OpenAI-compatible providers (`openai-api/…`, i.e. every model reached through the LiteLLM
+    proxy) default to `strict_tools=true`, which makes Inspect send tools with OpenAI strict
+    function-calling schemas. Azure OpenAI then *enforces* the strict rule that `required` must
+    list every property — but Claude Code's tool schemas carry optional properties (e.g. `Agent`
+    omits `subagent_type` from `required`), so Azure 400s the request, and Inspect's retry/backoff
+    turns that into a long silent stall (no `model_usage`, "does nothing for minutes"). Bedrock/
+    Anthropic ignore `strict`, which is why the Claude sweep models work untouched. Disabling it is
+    a no-op for models that don't enforce it, so it's safe to set for the whole openai-api family."""
+    if model.startswith("openai-api/"):
+        return ["-M", "strict_tools=false"]
+    return []
 
 
 def write_contract(contract: Contract, path: Path) -> Path:
@@ -140,8 +173,68 @@ def build_run_env(
     return env
 
 
-def subprocess_runner(spec: RunSpec) -> subprocess.Popen:
-    """Default runner: launch the run as a real `inspect eval` subprocess in `swarm-eval/`, with
-    the injected env layered over the inherited one."""
+class RunProcess:
+    """A launched run's handle over a real `subprocess.Popen` — used by BOTH launchers (a lone
+    single_agent run and each swarm worker), so it is named for the run, not the role. When
+    `detached` (the run has its own session/process group via `start_new_session`),
+    `terminate_group`/`kill_group` signal the WHOLE process group (`os.killpg`) so the run's
+    grandchildren — adb, frida, docker, the emulator bridge — die with the `inspect` parent, not
+    orphaned (05c). A non-detached run (single_agent, still attached to the launcher's tty) shares
+    the launcher's own process group, so signalling that group would hit the launcher itself; it
+    falls back to signalling only the run process."""
+
+    def __init__(self, proc: subprocess.Popen, *, detached: bool) -> None:
+        self._proc = proc
+        self._detached = detached
+
+    def poll(self) -> int | None:
+        return self._proc.poll()
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self._proc.wait(timeout)
+
+    def terminate_group(self) -> None:
+        self._signal_group(signal.SIGTERM)
+
+    def kill_group(self) -> None:
+        self._signal_group(signal.SIGKILL)
+
+    def _signal_group(self, sig: int) -> None:
+        if not self._detached:
+            # Attached: the run shares the launcher's group — signal just the process, never the
+            # group (that would take the launcher down with it).
+            self._proc.send_signal(sig)
+            return
+        try:
+            os.killpg(os.getpgid(self._proc.pid), sig)
+        except ProcessLookupError:
+            pass  # the group is already gone — nothing left to signal
+
+
+def subprocess_runner(spec: RunSpec) -> RunProcess:
+    """Default runner: launch the run as a real `inspect eval` subprocess in `swarm-eval/`, the
+    injected env layered over the inherited one. When `spec.console_path` is set (a swarm worker),
+    the run is **detached** into its own session/process group (`start_new_session`) and its merged
+    stdout+stderr stream to that file — the 05c live tail; `start_new_session` and the conductor's
+    group-kill are one change (detaching without it would orphan the workers from the tty). The
+    parent's copy of the console file is closed right after spawn — the child keeps its own dup —
+    so launching N workers leaks no file descriptors. When `console_path` is None (single_agent),
+    the run stays attached: it inherits the launcher's stdout/stderr and process group unchanged."""
     env = {**os.environ, **spec.env}
-    return subprocess.Popen(spec.argv, cwd=str(swarm_eval_dir()), env=env)
+    cwd = str(swarm_eval_dir())
+    if spec.console_path is None:
+        return RunProcess(subprocess.Popen(spec.argv, cwd=cwd, env=env), detached=False)
+    spec.console_path.parent.mkdir(parents=True, exist_ok=True)
+    console = open(spec.console_path, "w", encoding="utf-8")
+    try:
+        proc = subprocess.Popen(
+            spec.argv,
+            cwd=cwd,
+            env=env,
+            stdout=console,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    finally:
+        console.close()  # the child inherited its own dup at exec; drop the parent's copy
+    return RunProcess(proc, detached=True)

@@ -82,6 +82,22 @@ FAILURE = "FAILURE"
 # the shared ones from `agent_runner` (re-exported above for `SwarmConfig`/tests).
 DEFAULT_CAP = 3
 
+# Each worker is launched with Inspect's `conversation` display (05c): it streams an ANSI-free
+# transcript to the worker's console file per model turn (flushed incrementally) instead of
+# painting a fullscreen curses TUI — so N workers no longer fight over one terminal, and the same
+# redirect is the live tail. `plain` is block-buffered (blind until exit) and `none` shows nothing.
+DISPLAY_CONVERSATION = "conversation"
+
+# The per-worker console file (merged stdout+stderr) under each worker's log dir — `tail -f` this
+# for the guaranteed-live view; one file per worker (own process) means no interleaving.
+CONSOLE_FILENAME = "console.out"
+
+# A concrete port for the printed `inspect view` watch hint so the command is copy-pasteable (the
+# operator changes it if taken). A conductor-managed webview — injectable launcher + a configurable
+# `dashboard_port` — is deferred (05c Notes); the `.eval` files update live under the log dir, so
+# the webview "works" by running this printed command in a spare terminal.
+DEFAULT_VIEW_PORT = 7575
+
 
 class SwarmError(RuntimeError):
     """A swarm run could not be set up (e.g. more workers than the device cap)."""
@@ -182,6 +198,7 @@ def build_run_argv(*, config: SwarmConfig, task: str) -> list[str]:
         task=task,
         time_limit=config.time_limit,
         message_limit=config.message_limit,
+        display=DISPLAY_CONVERSATION,
     )
 
 
@@ -272,11 +289,15 @@ class Conductor:
         try:
             # board up → devices acquired (all, before any launch) → runs launched.
             specs = self._acquire_and_plan(swarm_id, log_dir, worker_ids, acquired)
+            logger.info("swarm %s: acquired %d device(s): %s", swarm_id, len(acquired),
+                        ", ".join(acquired))
             # Append each handle as it is spawned (not a comprehension): if a later launch raises,
             # the already-spawned runs are still in `handles` for the `finally` to tear down — no
             # orphaned subprocess.
             for spec in specs:
                 handles.append(self._runner(spec))
+            logger.info("swarm %s: launched %d worker(s)", swarm_id, len(handles))
+            self._log_watch_hints(log_dir)
             # arbitrate: wait for a verdict (or the budget), then announce it so workers stop.
             verdict = arbitrate(
                 board,
@@ -299,15 +320,19 @@ class Conductor:
     def _acquire_and_plan(
         self, swarm_id: str, log_dir: Path, worker_ids: list[str], acquired: list[str]
     ) -> list[RunSpec]:
-        """Pre-acquire one device per worker (the dynamic role) and build each run's spec. A
-        contract is written to `log_dir/<agent-id>.device` and injected as `DEVICE_CONTRACT`; the
+        """Pre-acquire one device per worker (the dynamic role) and build each run's spec. Each
+        worker gets its OWN log dir `log_dir/<agent-id>/` (05c: restores the ADR-0002
+        `<swarm-id>/<agent-id>/` intent, so `inspect view --recursive` lists one distinguishable
+        entry per worker) — its `INSPECT_LOG_DIR`, the `<agent-id>.device` contract injected as
+        `DEVICE_CONTRACT`, and the `console.out` its stdout+stderr stream to (the live tail). The
         serial is recorded in `acquired` *before* the next acquire, so a mid-way failure still
         releases every device already granted (the caller's `finally`)."""
         specs: list[RunSpec] = []
         for agent_id in worker_ids:
             contract = self._acquire(self.config.spec)
             acquired.append(contract.serial)
-            contract_path = agent_runner.write_contract(contract, log_dir / f"{agent_id}.device")
+            agent_log_dir = log_dir / agent_id
+            contract_path = agent_runner.write_contract(contract, agent_log_dir / f"{agent_id}.device")
             specs.append(
                 RunSpec(
                     argv=build_run_argv(config=self.config, task=self.config.worker_task),
@@ -316,13 +341,23 @@ class Conductor:
                         swarm_id=swarm_id,
                         agent_id=agent_id,
                         role=ROLE_WORKER,
-                        log_dir=log_dir,
+                        log_dir=agent_log_dir,
                         device_contract=contract_path,
                         worker_ids=worker_ids,
                     ),
+                    console_path=agent_log_dir / CONSOLE_FILENAME,
                 )
             )
         return specs
+
+    def _log_watch_hints(self, log_dir: Path) -> None:
+        """Print the two ways to watch the swarm (05c), both live-safe. The `tail -f` of the
+        per-worker console files is the guaranteed-live view (ANSI-free, per model turn); the
+        `inspect view` command serves the rich browser transcript over the live-updating `.eval`
+        logs (`--recursive` lists one entry per worker)."""
+        logger.info("swarm: watch (live tail): tail -f %s/*/%s", log_dir, CONSOLE_FILENAME)
+        logger.info("swarm: watch (webview):   inspect view --log-dir %s --recursive --port %d",
+                    log_dir, DEFAULT_VIEW_PORT)
 
     def _post_done(self, board: Board, verdict: Verdict) -> None:
         """Post the reserved `done` verdict as the arbiter. Posting through `Board` directly (not
@@ -341,16 +376,25 @@ class Conductor:
         this instant would defeat the worker's "stop when `done` appears, then write your verdict"
         step. Then layer (c): terminate any survivor, allow a second grace, and hard-kill whatever
         is still alive. On a failure teardown (`done` never posted) the cooperative wait is
-        skipped — nothing told the runs to stop, so tear them down straight away. Idempotent."""
+        skipped — nothing told the runs to stop, so tear them down straight away. Idempotent.
+
+        Every kill is a **process-group** signal (`terminate_group`/`kill_group`), not a signal to
+        the lone `inspect` parent (05c): a detached worker leads its own group, so this reaps its
+        grandchildren (adb, frida, docker, the emulator bridge) too — no orphans survive Ctrl-C or
+        an over-cap fail-fast."""
+        if handles:
+            logger.info("swarm: tearing down %d worker(s)", len(handles))
         if cooperative:
             self._await_exit(handles, self.config.grace)
         alive = [h for h in handles if h.poll() is None]
+        if alive:
+            logger.info("swarm: %d worker(s) still alive after grace — terminating", len(alive))
         for h in alive:
-            h.terminate()
+            h.terminate_group()
         self._await_exit(alive, self.config.grace)
         for h in alive:
             if h.poll() is None:
-                h.kill()
+                h.kill_group()
 
     def _await_exit(self, handles: list[RunHandle], timeout: float) -> None:
         """Wait up to `timeout` seconds (shared across the batch) for still-running handles to

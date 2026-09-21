@@ -12,6 +12,8 @@ from swarm_eval import conductor as C
 from swarm_eval.agent_runner import ENV_DEVICE_CONTRACT
 from swarm_eval.broker_client import BrokerError, Contract, parse_contract
 from swarm_eval.conductor import (
+    CONSOLE_FILENAME,
+    DISPLAY_CONVERSATION,
     ENV_AGENT_ID,
     ENV_BOARD_DIR,
     ENV_INSPECT_LOG_DIR,
@@ -53,25 +55,26 @@ class FakeClock:
 
 
 class FakeHandle:
-    """A stand-in `RunHandle`. `stubborn=True` ignores `terminate` (never exits on its own) to
-    exercise the hard-kill layer; otherwise `terminate` makes it exit cooperatively."""
+    """A stand-in `RunHandle`. `stubborn=True` ignores `terminate_group` (never exits on its own)
+    to exercise the hard-kill layer; otherwise `terminate_group` makes it exit cooperatively.
+    Teardown is at the process-group level (05c), so the flags record the *group* signals."""
 
     def __init__(self, stubborn: bool = False) -> None:
         self._code: int | None = None
         self.stubborn = stubborn
-        self.terminated = False
-        self.killed = False
+        self.group_terminated = False
+        self.group_killed = False
 
     def poll(self) -> int | None:
         return self._code
 
-    def terminate(self) -> None:
-        self.terminated = True
+    def terminate_group(self) -> None:
+        self.group_terminated = True
         if not self.stubborn:
             self._code = -15
 
-    def kill(self) -> None:
-        self.killed = True
+    def kill_group(self) -> None:
+        self.group_killed = True
         self._code = -9
 
     def wait(self, timeout: float | None = None) -> int:
@@ -82,23 +85,23 @@ class FakeHandle:
 
 class CooperativeHandle:
     """A run that notices `done` and exits cleanly the moment it is waited on (the layer-a
-    cooperative-stop window) — used to prove the Conductor does NOT SIGTERM a run that self-exits
-    within the grace."""
+    cooperative-stop window) — used to prove the Conductor does NOT group-kill a run that
+    self-exits within the grace."""
 
     def __init__(self) -> None:
         self._code: int | None = None
-        self.terminated = False
-        self.killed = False
+        self.group_terminated = False
+        self.group_killed = False
 
     def poll(self) -> int | None:
         return self._code
 
-    def terminate(self) -> None:
-        self.terminated = True
+    def terminate_group(self) -> None:
+        self.group_terminated = True
         self._code = -15
 
-    def kill(self) -> None:
-        self.killed = True
+    def kill_group(self) -> None:
+        self.group_killed = True
         self._code = -9
 
     def wait(self, timeout: float | None = None) -> int:
@@ -249,6 +252,14 @@ def test_build_run_argv_selects_target_via_spec(tmp_path):
     assert argv[i - 1] == "dynamic_agent.py" and argv[i + 1] == "spec=devices/healthhub.yaml"
 
 
+def test_build_run_argv_carries_display_conversation(tmp_path):
+    # 05c: every worker run launches with `--display conversation` so no worker paints a fullscreen
+    # curses TUI over the terminal — the same redirect that makes the console file the live tail.
+    argv = build_run_argv(config=cfg(tmp_path), task="dynamic_agent.py")
+    i = argv.index("--display")
+    assert argv[i + 1] == DISPLAY_CONVERSATION == "conversation"
+
+
 def test_build_run_argv_omits_limits_when_explicitly_none(tmp_path):
     argv = build_run_argv(
         config=cfg(tmp_path, time_limit=None, message_limit=None), task="dynamic_agent.py"
@@ -257,6 +268,7 @@ def test_build_run_argv_omits_limits_when_explicitly_none(tmp_path):
         "inspect", "eval", "dynamic_agent.py",
         "-T", f"spec={C.DEFAULT_SPEC}",
         "--model", C.DEFAULT_MODEL,
+        "--display", DISPLAY_CONVERSATION,  # 05c: the conductor always requests conversation
     ]
 
 
@@ -413,7 +425,7 @@ def test_run_kills_a_straggler_that_ignores_terminate(tmp_path):
     runner = make_runner({"worker-1": "success"}, stubborn={"worker-1"})
     _run(config, broker, runner, FakeClock())
     h = runner.handles[0]
-    assert h.terminated and h.killed  # terminate ignored → escalated to kill (layer c)
+    assert h.group_terminated and h.group_killed  # terminate ignored → escalated to kill (layer c)
 
 
 def test_run_tears_down_already_spawned_runs_when_a_later_launch_fails(tmp_path):
@@ -424,7 +436,7 @@ def test_run_tears_down_already_spawned_runs_when_a_later_launch_fails(tmp_path)
     runner = ExplodingRunner("worker-2")
     with pytest.raises(RuntimeError):
         _run(config, broker, runner, FakeClock())
-    assert runner.handles["worker-1"].terminated  # spawned run torn down, not left running
+    assert runner.handles["worker-1"].group_terminated  # spawned run torn down, not left running
     # both devices were acquired (all acquires happen before any launch) → both released
     assert sorted(broker.released) == ["emulator-5554", "emulator-5556"]
 
@@ -445,7 +457,7 @@ def test_run_lets_a_worker_exit_cooperatively_before_terminating(tmp_path):
     result = _run(config, broker, runner, FakeClock())
     assert result.verdict.value == "SUCCESS"
     assert coop.poll() == 0  # exited cleanly on its own
-    assert not coop.terminated and not coop.killed
+    assert not coop.group_terminated and not coop.group_killed
 
 
 def test_run_n1_uses_the_same_path_as_nge2(tmp_path):
@@ -456,3 +468,81 @@ def test_run_n1_uses_the_same_path_as_nge2(tmp_path):
     result = _run(config, broker, make_runner({"worker-1": "success"}), FakeClock())
     authors = sorted(m["author"] for m in Board(result.board_path).list())
     assert authors == ["arbiter", "worker-1"]
+
+
+# ---- 05c: per-worker log dir + console file, process-group teardown ------------------------
+
+def test_run_gives_each_worker_its_own_log_dir_and_console_file(tmp_path):
+    # 05c: each worker's INSPECT_LOG_DIR is logs/<swarm-id>/<agent-id>/ (restores the ADR-0002
+    # <swarm-id>/<agent-id>/ intent 05b flattened), and its merged stdout+stderr redirect to
+    # <that dir>/console.out — the per-worker live tail, one file per process (no interleaving).
+    config = cfg(tmp_path, workers=2)
+    broker = FakeBroker()
+    specs: dict[str, C.RunSpec] = {}
+
+    def runner(spec: C.RunSpec) -> FakeHandle:
+        agent_id = spec.env[ENV_AGENT_ID]
+        specs[agent_id] = spec
+        Board(board_dir(spec.env[ENV_BOARD_DIR], spec.env[ENV_SWARM_ID])).post(
+            author=agent_id, subject="win", content="x", type="success"
+        )
+        return FakeHandle()
+
+    result = _run(config, broker, runner, FakeClock())
+    for agent_id in ("worker-1", "worker-2"):
+        spec = specs[agent_id]
+        agent_dir = result.log_dir / agent_id
+        assert spec.env[ENV_INSPECT_LOG_DIR] == str(agent_dir)
+        assert spec.console_path == agent_dir / CONSOLE_FILENAME
+    # the two workers' log dirs are distinguishable, not collapsed into one flattened dir
+    assert specs["worker-1"].env[ENV_INSPECT_LOG_DIR] != specs["worker-2"].env[ENV_INSPECT_LOG_DIR]
+
+
+class RecordingHandle:
+    """Records which teardown calls it received, so a test can prove the conductor signals the
+    process GROUP (05c) and never the lone `inspect` process. Stays alive through
+    `terminate_group` (a straggler) so the hard-kill escalation runs too."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+        self._code: int | None = None
+
+    def poll(self) -> int | None:
+        return self._code
+
+    def terminate(self) -> None:  # lone-process SIGTERM — must NOT be used
+        self.calls.append("terminate")
+
+    def kill(self) -> None:  # lone-process SIGKILL — must NOT be used
+        self.calls.append("kill")
+
+    def terminate_group(self) -> None:
+        self.calls.append("terminate_group")  # ignored → stays alive, forcing the hard kill
+
+    def kill_group(self) -> None:
+        self.calls.append("kill_group")
+        self._code = -9
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self._code is None:
+            raise TimeoutError("still running")
+        return self._code
+
+
+def test_shutdown_kills_the_process_group_not_the_lone_process(tmp_path):
+    # 05c correctness item: teardown escalates SIGTERM → SIGKILL at the process-GROUP level so a
+    # detached worker's grandchildren (emulator/bridge/docker) die too — never a per-Popen signal
+    # to the lone `inspect` parent (which would orphan them).
+    config = cfg(tmp_path, workers=1)
+    broker = FakeBroker()
+    h = RecordingHandle()
+
+    def runner(spec: C.RunSpec) -> RecordingHandle:
+        Board(board_dir(spec.env[ENV_BOARD_DIR], spec.env[ENV_SWARM_ID])).post(
+            author=spec.env[ENV_AGENT_ID], subject="win", content="x", type="success"
+        )
+        return h
+
+    _run(config, broker, runner, FakeClock())
+    assert h.calls == ["terminate_group", "kill_group"]  # group-level escalation (layers a→c)
+    assert "terminate" not in h.calls and "kill" not in h.calls  # never the lone-process signal
