@@ -73,8 +73,14 @@ _badging_activity() { sed -nE "s/^launchable-activity: name='([^']+)'.*/\1/p"; }
 
 # apk_package APK — echo the package name derived from the APK's manifest.
 apk_package() {
-  local aapt; aapt=$(aapt_bin) || { echo "provision: no aapt in \$ANDROID_SDK_ROOT/build-tools (source bin/env.sh)" >&2; return 1; }
-  "$aapt" dump badging "$1" 2>/dev/null | _badging_package | head -1
+  local aapt pkg; aapt=$(aapt_bin) || { echo "provision: no aapt in \$ANDROID_SDK_ROOT/build-tools (source bin/env.sh)" >&2; return 1; }
+  # aapt exits non-zero on benign badging warnings (e.g. an android:icon reference that lives
+  # in a split_config APK, not in base.apk) even when it still prints the package line. Capture
+  # the output and judge by the derived name, so a warning does not kill the derive under the
+  # caller's `set -o pipefail` (env-up).
+  pkg=$("$aapt" dump badging "$1" 2>/dev/null | _badging_package | head -1)
+  [ -n "$pkg" ] || return 1
+  printf '%s\n' "$pkg"
 }
 
 # apk_launch_activity APK — echo the launchable-activity name (may be empty for a library).
