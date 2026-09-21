@@ -106,6 +106,7 @@ def build_run_argv(
     model: str = DEFAULT_MODEL,
     task: str = DEFAULT_WORKER_TASK,
     time_limit: int | None = None,
+    working_limit: int | None = None,
     message_limit: int | None = None,
     display: str | None = None,
 ) -> list[str]:
@@ -120,6 +121,11 @@ def build_run_argv(
     argv += _provider_model_args(model)
     if time_limit is not None:
         argv += ["--time-limit", str(time_limit)]
+    if working_limit is not None:
+        # Inspect's --working-limit caps model WORKING time (excludes retry/rate-limit backoff);
+        # --time-limit caps wall time. On a rate-limited proxy, wall time is dominated by 429
+        # backoff, so working_limit is the budget that actually reflects the agent's effort.
+        argv += ["--working-limit", str(working_limit)]
     if message_limit is not None:
         argv += ["--message-limit", str(message_limit)]
     if display is not None:

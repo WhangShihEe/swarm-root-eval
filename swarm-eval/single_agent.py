@@ -59,6 +59,7 @@ class SingleConfig:
     spec: str
     model: str = DEFAULT_MODEL
     time_limit: int | None = DEFAULT_TIME_LIMIT  # per-run Inspect --time-limit (s); layer (b)
+    working_limit: int | None = None  # per-run Inspect --working-limit (s); working time, opt-in
     message_limit: int | None = None  # per-run Inspect --message-limit; layer (b), opt-in
     task: str = DEFAULT_WORKER_TASK
     log_root: Path = field(default_factory=lambda: swarm_eval_dir() / "logs")
@@ -90,6 +91,7 @@ def run_single(
             model=config.model,
             task=config.task,
             time_limit=config.time_limit,
+            working_limit=config.working_limit,
             message_limit=config.message_limit,
         )
         # No board env → dynamic_agent runs in single mode (bare mission, no board tools).
@@ -111,6 +113,7 @@ def build_config(args: argparse.Namespace) -> SingleConfig:
         spec=args.spec,
         model=args.model,
         time_limit=args.time_limit,
+        working_limit=args.working_limit,
         message_limit=args.message_limit,
     )
     if args.log_dir is not None:
@@ -127,6 +130,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="served provider model the sandboxed CC proxies to (the sweep lever)")
     p.add_argument("--time-limit", type=int, default=DEFAULT_TIME_LIMIT,
                    help=f"per-run Inspect --time-limit in seconds (default {DEFAULT_TIME_LIMIT})")
+    p.add_argument("--working-limit", type=int, default=None,
+                   help="per-run Inspect --working-limit in seconds: caps WORKING time (excludes "
+                        "retry/rate-limit backoff), unlike --time-limit which caps wall time (opt-in)")
     p.add_argument("--message-limit", type=int, default=None,
                    help="per-run Inspect --message-limit (opt-in)")
     p.add_argument("--log-dir", type=Path, default=None,
