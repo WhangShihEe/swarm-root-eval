@@ -44,7 +44,7 @@
 #                        give up, the daemon auto-releases any device it went on to grant).
 # BROKER_CLIENT_POLL     client poll interval while waiting, seconds (default 0.2).
 # Pool config (POOL_DIR / POOL_CAP / POOL_ENV_UP / POOL_ENV_DOWN) is the pool engine's; the
-# broker just drives pool_acquire/pool_release, so the cap it enforces is POOL_CAP (default 3).
+# broker just drives pool_acquire/pool_release, so the cap it enforces is POOL_CAP (default 6).
 broker_dir()          { printf '%s\n' "${BROKER_DIR:-${HARNESS_ROOT:-$PWD}/.broker}"; }
 broker_queue()        { printf '%s\n' "$(broker_dir)/queue"; }
 broker_pidfile()      { printf '%s\n' "$(broker_dir)/broker.pid"; }

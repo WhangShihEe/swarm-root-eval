@@ -81,7 +81,7 @@ FAILURE = "FAILURE"
 # The device cap mirrors the broker's POOL_CAP (the broker still enforces the hard cap; this is
 # the launcher's fail-fast courtesy). The worker task, model, and per-run time-limit defaults are
 # the shared ones from `agent_runner` (re-exported above for `SwarmConfig`/tests).
-DEFAULT_CAP = 3
+DEFAULT_CAP = 6
 
 # Each worker is launched with Inspect's `conversation` display (05c): it streams an ANSI-free
 # transcript to the worker's console file per model turn (flushed incrementally) instead of

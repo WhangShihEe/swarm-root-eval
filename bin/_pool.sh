@@ -32,12 +32,12 @@
 
 # --- config: pool dir, cap, and the (overridable) bring-up/teardown commands -------------
 # POOL_DIR    where the registry + per-slot AVD homes live (default: repo-local .pool/).
-# POOL_CAP    max concurrent devices (a single config value, default 3; N=1 is the default
+# POOL_CAP    max concurrent devices (a single config value, default 6; N=1 is the default
 #             path and is NOT special-cased — acquire just builds one).
 # POOL_ENV_UP / POOL_ENV_DOWN  the bring-up/teardown commands; overridable so the hermetic
 #             tests can inject fakes instead of booting a real emulator.
 pool_dir()      { printf '%s\n' "${POOL_DIR:-${HARNESS_ROOT:-$PWD}/.pool}"; }
-pool_cap()      { printf '%s\n' "${POOL_CAP:-3}"; }
+pool_cap()      { printf '%s\n' "${POOL_CAP:-6}"; }
 _pool_env_up()  { printf '%s\n' "${POOL_ENV_UP:-${HARNESS_ROOT:-$PWD}/bin/env-up}"; }
 _pool_env_down(){ printf '%s\n' "${POOL_ENV_DOWN:-${HARNESS_ROOT:-$PWD}/bin/env-down}"; }
 _pool_slots_dir(){ printf '%s\n' "$(pool_dir)/slots"; }

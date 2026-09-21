@@ -66,7 +66,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--model", default=DEFAULT_MODEL,
                    help="served provider model the sandboxed CC proxies to (the sweep lever)")
     p.add_argument("--cap", type=int, default=DEFAULT_CAP,
-                   help="max workers before fail-fast (mirrors the broker cap; default 3)")
+                   help="max workers before fail-fast (mirrors the broker cap; default 6)")
     p.add_argument("--time-limit", type=int, default=None,
                    help="per-run Inspect --time-limit in seconds (layer-b termination)")
     p.add_argument("--message-limit", type=int, default=None,
