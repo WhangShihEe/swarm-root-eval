@@ -1,23 +1,26 @@
-# Device-spec: DBS digibank (single self-contained APK -> adb install -r).
-# Boots the pixel-a37 device and provisions it with the DBS app installed.
-#   bin/env-up  --spec devices/dbs.yaml
-#   bin/verify  --spec devices/dbs.yaml
-#   bin/env-down --spec devices/dbs.yaml
+# Device-spec: DBS digibank — cold RASP probe. Thin spec: app-specific facts only; the mission flow
+# comes from the shared prompt `devices/prompts/get-running-disable-rasp.yaml` via `prompt:`
+# (resolved in swarm_eval/target.py). Same emulator/image as every other probe spec.
+#   bin/env-up  --spec devices/dbs.yaml   (bin/verify / bin/env-down likewise)
 
-name: dbs                       # AVD name + adb tag
-device_profile: pixel           # avdmanager -d <profile>
-system_image: "system-images;android-37.1;google_apis_ps16k;arm64-v8a"
-api: "37.1"                     # env-up asserts config.ini target == android-37.1
+name: dbs                   # AVD name + adb tag (its own AVD)
+device_profile: pixel
+system_image: "system-images;android-35;google_apis;arm64-v8a"
+api: "35"
 
-ram_mb: 4096                    # hw.ramSize
-cores: 4                        # hw.cpu.ncore
-data_size_mb: 8192              # disk.dataPartition.size
+ram_mb: 4096
+cores: 4
+data_size_mb: 8192
 
-# --- ticket 04: provisioning ---
-# APK lives in the untracked in-project corpus (apks/, gitignored). Path is repo-relative;
-# env-up/bin/verify resolve it against CWD then the repo root (apk_resolve_path).
-target_apk: "apks/dbs/base.apk"
+target_apk: "apks/dbs/base.apk"   # env-up auto-detects split_config.* siblings, if any
 provision: true
 frida: true
 normalize_settings: true
-headless: true                  # false -> boot with a visible window (or run env-up --window)
+headless: true
+
+app:
+  package: com.dbs.sg.dbsmbanking
+  label: "DBS digibank"
+  # launch_activity omitted — the agent discovers it from the manifest.
+  frida_mode: spawn               # runtime mode only; injects no method text into the prompt
+  prompt: get-running-disable-rasp   # shared mission slots (objective/success_signal/details)

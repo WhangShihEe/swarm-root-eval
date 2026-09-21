@@ -30,6 +30,13 @@ STAGE_DIR = "/root"
 # init. A hardened app that dies on launch overrides this to `spawn` so hooks land first.
 DEFAULT_FRIDA_MODE = "attach"
 
+# Shared mission prompts live here (repo-relative). Instead of inlining the three mission slots,
+# a spec's app: block may set `prompt: <name>`; the slots are then read from
+# `devices/prompts/<name>.yaml`, so one flow is authored once and reused across many specs. Any
+# inline app: key still overrides the shared file field-by-field.
+PROMPTS_DIR = "devices/prompts"
+PROMPT_FIELDS = ("objective", "success_signal", "details")
+
 
 @dataclass(frozen=True)
 class TargetConfig:
@@ -87,6 +94,18 @@ def _apk_file_set(primary_abs: Path) -> dict[str, str]:
     return files
 
 
+def _load_prompt(root: Path, name: str) -> dict[str, Any]:
+    """Read a shared mission prompt (`devices/prompts/<name>.yaml`) into its slot map. Only the
+    prompt fields (`objective`/`success_signal`/`details`) are meaningful; any other key is
+    ignored. Raises if the named prompt file is absent, so a typo'd `prompt:` fails loudly rather
+    than silently rendering an empty mission."""
+    p = (root / PROMPTS_DIR / f"{name}.yaml").resolve()
+    if not p.is_file():
+        raise ValueError(f"app.prompt '{name}': no shared prompt at {p}")
+    loaded = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    return {k: loaded[k] for k in PROMPT_FIELDS if k in loaded}
+
+
 def load_target(spec: str | Path) -> TargetConfig:
     """Read one `devices/<name>.yaml` into a `TargetConfig`.
 
@@ -114,15 +133,24 @@ def load_target(spec: str | Path) -> TargetConfig:
         spec_path = str(spec)
 
     app: dict[str, Any] = data.get("app") or {}
+
+    # A spec may pull the mission slots from a shared `devices/prompts/<name>.yaml` via `prompt:`;
+    # an inline app: key overrides the shared file slot-by-slot (inline wins, else shared, else "").
+    shared = _load_prompt(root, app["prompt"]) if app.get("prompt") else {}
+
+    def slot(key: str) -> Any:
+        v = app.get(key)
+        return v if v is not None else shared.get(key)
+
     return TargetConfig(
         spec_path=spec_path,
         files=_apk_file_set(primary_abs),
         apk_name=primary_abs.name,
         package=app.get("package", ""),
         label=app.get("label", ""),
-        objective=app.get("objective", ""),
-        success_signal=app.get("success_signal", ""),
+        objective=slot("objective") or "",
+        success_signal=slot("success_signal") or "",
         launch_activity=app.get("launch_activity"),
         frida_mode=app.get("frida_mode") or DEFAULT_FRIDA_MODE,
-        details=app.get("details"),
+        details=slot("details"),
     )

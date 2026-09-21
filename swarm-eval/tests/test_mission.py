@@ -1,16 +1,18 @@
 """APK-agnostic refactor, ticket 02 — ONE generic mission built from a `TargetConfig`.
 
 Proves the two shipped targets render through a single template: the target-agnostic boilerplate
-(device connect + exact toolchain + efficiency nudge + verdict format) is byte-identical across
-them, while the app slots differ, and `frida_mode` drives the spawn-vs-attach structural
-difference. Plus the (unchanged) self-report verdict extraction. Pure — no broker, no corpus:
-`load_target` reads only the yaml (the split file-set is not needed to render a mission).
+(device connect + exact toolchain + verdict format) is byte-identical across them, while the app
+slots differ. `frida_mode` is a runtime device knob only — after the mode guidance was dropped
+from the prompt, it no longer changes the rendered mission. Plus the (unchanged) self-report
+verdict extraction. Pure — no broker, no corpus: `load_target` reads only the yaml (the split
+file-set is not needed to render a mission).
 """
+
+import dataclasses
 
 from swarm_eval.mission import (
     VERDICT_TOKEN,
     _device_and_tools,
-    _efficiency_nudge,
     _verdict_block,
     build_mission,
     extract_self_report,
@@ -56,7 +58,7 @@ def test_boilerplate_is_byte_identical_across_targets():
     # missions — the whole point of the refactor: the only difference is the yaml.
     rasp = build_mission(RASP, contract_path=CONTRACT)
     hh = build_mission(HEALTHHUB, contract_path=CONTRACT)
-    for block in (_device_and_tools(CONTRACT), _efficiency_nudge(), _verdict_block()):
+    for block in (_device_and_tools(CONTRACT), _verdict_block()):
         assert block in rasp
         assert block in hh
 
@@ -72,16 +74,17 @@ def test_app_slots_differ_across_targets():
     assert HEALTHHUB.objective in hh and HEALTHHUB.objective not in rasp
 
 
-def test_frida_mode_drives_spawn_vs_attach():
-    rasp = build_mission(RASP, contract_path=CONTRACT)       # attach
-    hh = build_mission(HEALTHHUB, contract_path=CONTRACT)    # spawn
-    assert RASP.frida_mode == "attach" and HEALTHHUB.frida_mode == "spawn"
-    # attach target: ATTACH guidance, and NO spawn-only "reproduce the crash first" step
-    assert "ATTACH" in rasp and "-a <pid>" in rasp
-    assert "Reproduce the failure FIRST" not in rasp
-    # spawn target: SPAWN guidance + the reproduce-first step
-    assert "SPAWN" in hh and "-f <package>" in hh
-    assert "Reproduce the failure FIRST" in hh
+def test_frida_mode_does_not_leak_into_mission():
+    # The mode guidance was removed from the prompt: frida_mode is now a runtime device knob only
+    # and MUST NOT change the rendered mission. This guards the cold design — two targets differing
+    # ONLY in frida_mode render byte-for-byte identically, and the removed spawn-only guidance
+    # ("reproduce the crash first") no longer appears. (Tool-manual examples like `frida-run -f`
+    # remain — those are usage of the baked runner, not spawn-vs-attach method guidance.)
+    spawn = dataclasses.replace(RASP, frida_mode="spawn")
+    attach = dataclasses.replace(RASP, frida_mode="attach")
+    m_spawn = build_mission(spawn, contract_path=CONTRACT)
+    assert m_spawn == build_mission(attach, contract_path=CONTRACT)
+    assert "Reproduce the failure FIRST" not in m_spawn
 
 
 def test_extract_self_report_success():

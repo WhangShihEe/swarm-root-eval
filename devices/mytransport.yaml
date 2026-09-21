@@ -1,0 +1,26 @@
+# Device-spec: MyTransport.SG — cold RASP probe. Thin spec: app-specific facts only; the mission flow
+# comes from the shared prompt `devices/prompts/get-running-disable-rasp.yaml` via `prompt:`
+# (resolved in swarm_eval/target.py). Same emulator/image as every other probe spec.
+#   bin/env-up  --spec devices/mytransport.yaml   (bin/verify / bin/env-down likewise)
+
+name: mytransport                   # AVD name + adb tag (its own AVD)
+device_profile: pixel
+system_image: "system-images;android-35;google_apis;arm64-v8a"
+api: "35"
+
+ram_mb: 4096
+cores: 4
+data_size_mb: 8192
+
+target_apk: "apks/mytransport/base.apk"   # env-up auto-detects split_config.* siblings, if any
+provision: true
+frida: true
+normalize_settings: true
+headless: true
+
+app:
+  package: sg.gov.lta.mytransportsg
+  label: "MyTransport.SG"
+  # launch_activity omitted — the agent discovers it from the manifest.
+  frida_mode: spawn               # runtime mode only; injects no method text into the prompt
+  prompt: get-running-disable-rasp   # shared mission slots (objective/success_signal/details)

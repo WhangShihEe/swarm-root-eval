@@ -4,10 +4,11 @@ ONE generic mission template, filled from a `TargetConfig` (apk-agnostic refacto
 every target — the RASP toy, HealthHub, any future APK — runs through this one `build_mission`;
 the only difference between two targets is their `devices/<name>.yaml`. The target-agnostic
 boilerplate (how to reach the broker device, the exact baked toolchain, the frida-17 bridge
-workflow, the efficiency nudge, the verdict format) renders **byte-identically** for every
-target; the app-specific slots (label, package, launch activity, objective, success signal,
-details) come only from the `TargetConfig`; and the one structural difference — spawn vs
-attach — is chosen by `target.frida_mode`, so it too is yaml-defined.
+workflow, the verdict format) renders **byte-identically** for every target; the app-specific
+slots (label, package, launch activity, objective, success signal, details) come only from the
+`TargetConfig`. A spec supplies those slots inline or via a shared `devices/prompts/<name>.yaml`
+(see `target.load_target`). `target.frida_mode` is a runtime device knob only — it no longer
+shapes the prompt.
 
 The oracle is the MVP **self-report** (spec: "Oracle = self-report MVP + manual verification").
 The agent is instructed to end with a machine-readable verdict line; the scorer extracts it. A
@@ -101,38 +102,6 @@ Tools baked into this sandbox (this is the exact set — nothing else is install
   - `python3` for glue."""
 
 
-def _frida_mode_guidance(frida_mode: str) -> str:
-    """The one structural difference between targets, chosen by `target.frida_mode`: whether to
-    ATTACH to the already-running app or SPAWN it so hooks land before the check fires. A spawn
-    target (an app that trips its protection on launch) additionally reproduces the crash first.
-    The wording is app-agnostic; only the branch is yaml-selected."""
-    if frida_mode == "spawn":
-        return (
-            "Runtime hooking: this app trips its protection on launch, so SPAWN it — "
-            "`frida-run -f <package> -l /tmp/agent.js -t 45` — so your hooks are installed BEFORE "
-            "the check runs (attaching with `-a <pid>` only helps if the process survives long "
-            "enough). Reproduce the failure FIRST (`adb shell am start ...`, then `adb logcat -d`) "
-            "to capture the crash signature and which check fired, then reverse it statically and "
-            "neutralize it at runtime."
-        )
-    return (
-        "Runtime hooking: load your compiled agent by ATTACHING to the already-running app — "
-        "`frida-run -a <pid> -l /tmp/agent.js -t 45` — because spawn mode (`-f`) can crash an app "
-        "during early init. Launch the app first (`adb shell am start ...`), then attach and "
-        "neutralize the check at runtime."
-    )
-
-
-def _efficiency_nudge() -> str:
-    """Target-agnostic 'act, don't over-deliberate' nudge (the model backend is slow)."""
-    return (
-        "Work efficiently: the model backend is slow, so bias toward ACTING (run a command, read "
-        "its output) over long internal deliberation. Keep your reasoning short and concrete — a "
-        "sentence or two of plan, then a tool call. Don't re-derive what you already know or "
-        "re-read files you've read."
-    )
-
-
 def _confirm_line(target: TargetConfig) -> str:
     """App-specific 'how do I know I succeeded' line, from the yaml `success_signal`."""
     return f"How to confirm success: {target.success_signal}"
@@ -157,14 +126,12 @@ def build_mission(target: TargetConfig, *, contract_path: str) -> str:
     a `TargetConfig`. Points the agent at the staged APK(s), the injected connection contract +
     connect helper, and the exact static+dynamic toolchain, and fixes the self-report format the
     oracle reads. rasp and healthhub (and any future APK) render through this single path — the
-    only difference is their yaml: the `_device_and_tools` / `_efficiency_nudge` / `_verdict_block`
-    boilerplate is byte-identical across targets, the app slots come from `target`, and
-    `target.frida_mode` picks the spawn-vs-attach guidance."""
+    only difference is their yaml: the `_device_and_tools` / `_verdict_block` boilerplate is
+    byte-identical across targets and the app slots come from `target`. (`target.frida_mode` is a
+    runtime device knob only; it no longer injects any guidance into the prompt.)"""
     return "\n\n".join([
         _briefing(target),
         _device_and_tools(contract_path),
-        _frida_mode_guidance(target.frida_mode),
-        _efficiency_nudge(),
         _confirm_line(target),
         _verdict_block(),
     ])

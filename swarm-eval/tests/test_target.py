@@ -71,13 +71,14 @@ def test_load_target_healthhub_split_set():
     assert set(t.files) == {f"/root/{n}" for n in names}
     assert all(Path(p).is_absolute() for p in t.files.values())
 
-    # app fields — spawn mode, and the split/native detail carried verbatim
+    # app fields — spawn mode; the mission slots are populated (prompt-agnostic: healthhub.yaml
+    # may carry an inline prompt or reference a shared one, so assert shape, not verbatim text)
     assert t.package == "sg.gov.hpb.healthhub"
     assert t.frida_mode == "spawn"
     assert t.launch_activity is None
     assert t.objective and "launch" in t.objective.lower()
-    assert t.details is not None and ".so" in t.details
-    assert "NO planted flag" in t.success_signal or "NO planted flag" in t.details
+    assert t.details is not None and t.details.strip()
+    assert t.success_signal and "dumpsys" in t.success_signal
 
 
 def test_load_target_is_cwd_independent(monkeypatch):
