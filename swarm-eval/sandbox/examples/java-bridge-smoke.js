@@ -10,7 +10,12 @@
 //   frida-compile examples/java-bridge-smoke.js -o /tmp/smoke.js
 //   frida-run -f <package> -l /tmp/smoke.js -t 30
 
-const Java = require('frida-java-bridge');
+// frida-java-bridge ships as an ES module (its package.json has "type":"module"), so under
+// frida-compile `require('frida-java-bridge')` returns the module namespace object — the bridge
+// itself is on `.default`. Grab that (with a CommonJS fallback) or `Java.perform` / `Java.use`
+// come back `undefined` and every hook throws `TypeError: not a function`.
+const _fridaJavaBridge = require('frida-java-bridge');
+const Java = _fridaJavaBridge.default || _fridaJavaBridge;
 
 Java.perform(() => {
   try {
