@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 470" width="1000" height="470" font-family="-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif" role="img" aria-label="android-swarm architecture: one APK in, broker leases a rooted emulator per worker, N independent Inspect-run Claude Code agents linked only by a host-side messageboard, an arbiter reads the board and issues a verdict">
+  <title>android-swarm architecture</title>
+  <defs>
+    <marker id="ar--" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0 L9 4.5 L0 9 z" fill="#57606a"/></marker>
+    <marker id="arb" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0 0 L9 4.5 L0 9 z" fill="#137a4e"/></marker>
+    <marker id="ars" markerWidth="9" markerHeight="9" refX="2" refY="4.5" orient="auto"><path d="M9 0 L0 4.5 L9 9 z" fill="#57606a"/></marker>
+  </defs>
+
+  <!-- self-contained panel: reads on light or dark README themes -->
+  <rect x="1" y="1" width="998" height="468" rx="16" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="24" y="34" font-size="13" fill="#57606a" font-weight="600" letter-spacing="0.4">HOST PROCESS &#8212; the swarm layer lives outside Inspect / outside the sandboxes</text>
+
+  <!-- 1 APK in -->
+  <g>
+    <rect x="30" y="196" width="118" height="86" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
+    <text x="89" y="230" text-anchor="middle" font-size="15" font-weight="700" fill="#1f2328">1 APK</text>
+    <text x="89" y="252" text-anchor="middle" font-size="12" fill="#57606a">in</text>
+    <text x="89" y="271" text-anchor="middle" font-size="11" fill="#57606a">rasp_dummy.apk</text>
+  </g>
+  <line x1="150" y1="239" x2="196" y2="239" stroke="#57606a" stroke-width="2" marker-end="url(#ar--)"/>
+
+  <!-- Broker -->
+  <g>
+    <rect x="198" y="184" width="156" height="110" rx="10" fill="#eafaf1" stroke="#137a4e"/>
+    <text x="276" y="212" text-anchor="middle" font-size="15" font-weight="700" fill="#0d1117">Broker</text>
+    <text x="276" y="234" text-anchor="middle" font-size="11.5" fill="#1f2328">standing service;</text>
+    <text x="276" y="250" text-anchor="middle" font-size="11.5" fill="#1f2328">owns the emulator pool,</text>
+    <text x="276" y="266" text-anchor="middle" font-size="11.5" fill="#1f2328">enforces the cap, grants</text>
+    <text x="276" y="282" text-anchor="middle" font-size="11.5" fill="#1f2328">1 rooted device / worker</text>
+  </g>
+
+  <!-- sandbox frame around the workers -->
+  <rect x="392" y="40" width="300" height="300" rx="12" fill="none" stroke="#8250df" stroke-width="1.5" stroke-dasharray="6 5"/>
+  <text x="542" y="60" text-anchor="middle" font-size="12" font-weight="600" fill="#8250df">N bridged workers &#8212; independent Inspect runs</text>
+
+  <!-- worker cards -->
+  <g font-size="11.5">
+    <!-- w1 -->
+    <rect x="410" y="72" width="264" height="66" rx="9" fill="#f6f8fa" stroke="#d0d7de"/>
+    <text x="424" y="96" font-size="13.5" font-weight="700" fill="#1f2328">worker-1</text>
+    <text x="424" y="114" fill="#57606a">bridged Claude Code agent &#183; own Inspect env</text>
+    <text x="424" y="130" fill="#57606a">drives a rooted emulator over adb + frida</text>
+    <!-- w2 -->
+    <rect x="410" y="150" width="264" height="66" rx="9" fill="#f6f8fa" stroke="#d0d7de"/>
+    <text x="424" y="174" font-size="13.5" font-weight="700" fill="#1f2328">worker-2</text>
+    <text x="424" y="192" fill="#57606a">bridged Claude Code agent &#183; own Inspect env</text>
+    <text x="424" y="208" fill="#57606a">drives a rooted emulator over adb + frida</text>
+    <!-- wN -->
+    <rect x="410" y="228" width="264" height="66" rx="9" fill="#f6f8fa" stroke="#d0d7de"/>
+    <text x="424" y="252" font-size="13.5" font-weight="700" fill="#1f2328">worker-N</text>
+    <text x="424" y="270" fill="#57606a">bridged Claude Code agent &#183; own Inspect env</text>
+    <text x="424" y="286" fill="#57606a">drives a rooted emulator over adb + frida</text>
+  </g>
+
+  <!-- broker leases arrows to each worker -->
+  <g stroke="#137a4e" stroke-width="2" fill="none">
+    <path d="M354 232 C378 190 384 130 408 105" marker-end="url(#arb)"/>
+    <path d="M354 244 C380 240 384 210 408 183" marker-end="url(#arb)"/>
+    <path d="M354 258 C380 300 384 300 408 261" marker-end="url(#arb)"/>
+  </g>
+  <text x="360" y="330" font-size="10.5" fill="#137a4e" font-style="italic">grants</text>
+
+  <!-- message board -->
+  <g>
+    <rect x="392" y="366" width="300" height="72" rx="10" fill="#fff8e6" stroke="#d4a72c"/>
+    <text x="542" y="392" text-anchor="middle" font-size="14" font-weight="700" fill="#1f2328">Messageboard (host-side)</text>
+    <text x="542" y="411" text-anchor="middle" font-size="11.5" fill="#57606a">append-only, one file per message &#8212; the ONLY link</text>
+    <text x="542" y="427" text-anchor="middle" font-size="11.5" fill="#57606a">between workers (no shared Inspect store)</text>
+  </g>
+  <!-- worker <-> board (post/read) -->
+  <g stroke="#57606a" stroke-width="1.6" fill="none">
+    <line x1="470" y1="294" x2="470" y2="366" marker-start="url(#ars)" marker-end="url(#ar--)"/>
+    <line x1="542" y1="294" x2="542" y2="366" marker-start="url(#ars)" marker-end="url(#ar--)"/>
+    <line x1="614" y1="294" x2="614" y2="366" marker-start="url(#ars)" marker-end="url(#ar--)"/>
+  </g>
+  <text x="622" y="338" font-size="10.5" fill="#57606a" font-style="italic">post / read</text>
+
+  <!-- arbiter -->
+  <g>
+    <rect x="742" y="120" width="222" height="92" rx="10" fill="#f6f8fa" stroke="#d0d7de"/>
+    <text x="853" y="150" text-anchor="middle" font-size="14" font-weight="700" fill="#1f2328">Arbiter</text>
+    <text x="853" y="171" text-anchor="middle" font-size="11.5" fill="#57606a">host-side rubric reads the</text>
+    <text x="853" y="187" text-anchor="middle" font-size="11.5" fill="#57606a">board and decides the</text>
+    <text x="853" y="203" text-anchor="middle" font-size="11.5" fill="#57606a">mission is done</text>
+  </g>
+  <!-- board -> arbiter -->
+  <path d="M692 388 C760 388 800 280 852 214" fill="none" stroke="#57606a" stroke-width="2" marker-end="url(#ar--)"/>
+
+  <!-- verdict -->
+  <g>
+    <rect x="742" y="300" width="222" height="82" rx="10" fill="#eafaf1" stroke="#137a4e"/>
+    <text x="853" y="332" text-anchor="middle" font-size="14" font-weight="700" fill="#0d1117">Verdict</text>
+    <text x="853" y="356" text-anchor="middle" font-size="13" fill="#137a4e" font-weight="600">SUCCESS / FAILURE</text>
+  </g>
+  <!-- arbiter -> verdict -->
+  <line x1="853" y1="212" x2="853" y2="300" stroke="#57606a" stroke-width="2" marker-end="url(#ar--)"/>
+</svg>

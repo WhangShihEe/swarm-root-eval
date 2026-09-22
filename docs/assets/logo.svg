@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="android-swarm green ant logo">
+  <title>android-swarm</title>
+  <!-- self-contained: rounded panel so the mark reads on light or dark backgrounds -->
+  <rect x="2" y="2" width="124" height="124" rx="28" fill="#0d1117"/>
+  <g fill="none" stroke="#137a4e" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <!-- antennae -->
+    <path d="M57 26 L45 12"/>
+    <path d="M71 26 L83 12"/>
+    <!-- left legs -->
+    <path d="M55 52 L30 42 L20 32"/>
+    <path d="M53 62 L26 62 L16 58"/>
+    <path d="M55 72 L30 84 L22 96"/>
+    <!-- right legs -->
+    <path d="M73 52 L98 42 L108 32"/>
+    <path d="M75 62 L102 62 L112 58"/>
+    <path d="M73 72 L98 84 L106 96"/>
+  </g>
+  <!-- antenna tips -->
+  <circle cx="45" cy="12" r="4" fill="#3ddc84"/>
+  <circle cx="83" cy="12" r="4" fill="#3ddc84"/>
+  <!-- body: head / thorax / abdomen -->
+  <g fill="#3ddc84" stroke="#137a4e" stroke-width="3">
+    <circle cx="64" cy="30" r="13"/>
+    <ellipse cx="64" cy="58" rx="12" ry="15"/>
+    <ellipse cx="64" cy="94" rx="18" ry="23"/>
+  </g>
+  <!-- abdomen segmentation -->
+  <g fill="none" stroke="#137a4e" stroke-width="2" opacity="0.7">
+    <path d="M47 88 Q64 96 81 88"/>
+    <path d="M48 100 Q64 108 80 100"/>
+  </g>
+  <!-- eyes -->
+  <circle cx="59" cy="28" r="2.4" fill="#0d1117"/>
+  <circle cx="69" cy="28" r="2.4" fill="#0d1117"/>
+</svg>

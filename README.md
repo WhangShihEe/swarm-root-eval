@@ -1,181 +1,125 @@
-# swarm-root-eval
+<div align="center">
 
-A **capability probe**: can a swarm of bridged Claude Code agents (N workers + an arbiter,
-each its own Inspect run) **compromise a real Android app** — bypass its anti-root / RASP
-checks — when handed nothing but an **APK file** and a **live rooted emulator**? Secondary goal:
-a **model sweep** (swap the served model behind the bridge) to see which do better.
+<img src="docs/assets/logo.svg" alt="android-swarm" width="120" height="120" />
 
-The agent interface is always *one APK in*; the harness is APK-agnostic. See
-[`CONTEXT.md`](CONTEXT.md) for the vocabulary and [`RUNBOOK.md`](RUNBOOK.md) for a from-scratch
-manual device bring-up.
+# android-swarm
 
-## Layout
+**Can a swarm of Claude Code agents compromise a real Android app?** android-swarm hands
+_N_ bridged Claude Code agents one thing — a single **APK file** and a live **rooted emulator** —
+and asks them to defeat its anti-root / RASP defenses and build a working bypass. It's a
+**capability probe** (can they do it at all, and which models do it best), not a
+fairness-controlled benchmark. The whole harness is **APK-agnostic**: point it at a new app by
+swapping one YAML file.
 
-Two halves, kept deliberately separate:
+_Demo GIF — `<WIP>`_ 🎥 &nbsp;a single loop of a worker agent driving a live emulator (the RASP
+target flipping `PROTECTED — TAMPER DETECTED` → `UNLOCKED` / `FLAG{…}` revealed) while the shared
+messageboard fills with the swarm's posts in real time. _Produced later via
+[`.scratch/demo-app-gif/`](.scratch/demo-app-gif/)._
 
-- **Device layer** (`bin/`, `devices/`, `apks/`) — the emulator harness. Boots + provisions a
-  rooted emulator from a **device-spec** and hands it out through a standing **broker**. Pure
-  bash; **Inspect-free**.
-- **Inspect layer** (`swarm-eval/`) — the `swarm_eval` Python package. Bridged Claude Code
-  agents (`inspect_swe.claude_code()`) that reach the broker as an external host process, drive
-  the device over adb, and work the target APK. A **launcher** (`swarm.py`) runs N of them.
-
-The target APK corpus lives under **`apks/`** (gitignored — large, app-owned binaries). The
-current default target is the **RASP dummy target** (`com.example.rasptarget`,
-`devices/rasp_dummy.yaml`).
-
-## One-time setup
-
-```bash
-cd ~/swarm-root-eval
-source bin/env.sh     # Android SDK + emulator/avdmanager/adb on PATH, JDK, versions.txt
-bin/doctor            # asserts pinned tool versions + the rootable image; must exit 0
-```
-
-For the Inspect layer (`swarm-eval/`):
-
-- [uv](https://docs.astral.sh/uv/) for the Python project (`uv run …` uses the locked deps).
-- A **host** provider key for the model you sweep — e.g. `ANTHROPIC_API_KEY`. The sandbox CC is
-  **keyless**; the *host* `inspect eval --model …` makes the real call (so the sweep is a
-  one-flag change, and no key lives in the image).
-- Docker (the agent runs in a sandbox image, built on first run from `swarm-eval/Dockerfile`).
-  The image build needs the corporate CA bundle at `swarm-eval/certs/ca-bundle-cf.pem`
-  (gitignored). See the Dockerfile header.
-- The target APK present in the corpus, e.g. `apks/rasp_dummy/rasp_dummy.apk`.
+</div>
 
 ---
 
-## 1. Interact with the broker + emulator
+## How it works
 
-The **broker** is a standing host service that owns a small pool of provisioned emulators and
-grants them one at a time. It's the simplest way to get a live, rooted, frida-ready device.
+<div align="center">
 
-```bash
-source bin/env.sh          # once per shell
+<img src="docs/assets/architecture.svg" alt="architecture: one APK in, the broker grants a rooted emulator per worker, N independent Inspect-run Claude Code agents linked only by a host-side messageboard, an arbiter reads the board and issues a verdict" width="920" />
 
-bin/broker start           # launch the daemon (grants honor each spec's profile)
-bin/broker ping            # liveness + which profile it's serving
-bin/broker status          # the pool registry (what's up / in use)
+</div>
 
-# Grant yourself a device to poke at by hand — prints a connection contract:
-#   serial=emulator-5554 console_port=5554 adb_port=5555 profile=writable-system
-bin/broker acquire --spec devices/rasp_dummy.yaml
-adb -s emulator-5554 shell id          # uid=0(root)
-frida-ps -U | head                     # frida-server reachable
+One APK goes in. A standing **broker** grants each worker its own rooted emulator. Each worker is
+a bridged Claude Code agent that inspects the APK statically (jadx/apktool/androguard) and attacks
+it dynamically (frida/objection over adb). A host-side **arbiter** watches the shared board and
+issues the verdict.
 
-bin/broker release --serial emulator-5554   # (or --port 5554) free the slot
-bin/broker stop            # shut the daemon down (also reclaims devices)
-```
+**Why the Inspect wiring is unusual.** The obvious way to run _N_ agents in Inspect — one eval
+with in-process subagents — doesn't work here: concurrent subagents collapse onto the parent's
+transcript span. So android-swarm runs **each worker as its own independent `inspect eval`**
+(one run = one bridge = one clean transcript) and wires the swarm together **outside Inspect**,
+from a host launcher. The workers share no Inspect state; their _only_ link is a host-side,
+append-only **messageboard**. The full story lives in
+[`swarm-eval/README.md`](swarm-eval/README.md) and [`docs/adr/0002-…`](docs/adr/0002-separate-runs-swarm-no-central-orchestrator.md).
 
-Handy extras:
+## Quickstart
 
-- `bin/broker demo --spec devices/rasp_dummy.yaml` — start, grant 2, release both, stop: the
-  whole live path in one shot.
-- **No broker, just one device by hand** (lower level): `bin/env-up --spec devices/rasp_dummy.yaml`
-  boots + provisions one emulator; `bin/verify --spec devices/rasp_dummy.yaml` proves it's at
-  t=0 (booted, frida up, APK installed); `bin/env-down --spec devices/rasp_dummy.yaml` tears it
-  down. `bin/pool` is the one-shot multi-device layer the broker stands on.
+Runs the owned **RASP-dummy** target out of the box.
 
-A **device-spec** (`devices/*.yaml`) is the whole target definition: AVD/device profile, system
-image, and the `target_apk` to provision. Copy `devices/rasp_dummy.yaml` to add a new app.
-
----
-
-## 2. Run a single-agent test against a target APK
-
-One bridged agent, one device, one clean transcript. The **launcher** `single_agent.py` owns the
-device lease (a scarce broker slot is a launcher concern, not an agent one): it leases a device,
-injects its connection contract into the run, launches the agent, and releases the device in a
-`finally` — guaranteed even on failure/timeout. Bring a broker up, then launch:
+**Prerequisites:** a macOS/Linux host with the Android SDK cmdline-tools + JDK 17+, [uv](https://docs.astral.sh/uv/),
+Docker (the agent runs in a sandbox image, built on first run), a host `ANTHROPIC_API_KEY`
+(the sandbox Claude Code is keyless — the _host_ makes the real call), and the target APK at
+`apks/rasp_dummy/rasp_dummy.apk`.
 
 ```bash
-source bin/env.sh
-bin/broker start                     # device layer up
+cd android-swarm
+source bin/env.sh          # Android SDK + adb/emulator/avdmanager + JDK on PATH (see versions.txt)
+bin/doctor                 # assert pinned tools + a rootable image; must exit 0
+bin/broker start           # bring the device layer up (grants rooted emulators on demand)
 
+# (optional smoke) grab a live rooted device by hand, then hand it straight back:
+bin/broker acquire --spec devices/rasp_dummy.yaml   # → serial=… adb_port=… profile=writable-system
+bin/broker release --serial emulator-5554
+
+# run one bridged Claude Code agent at the RASP-dummy target
+# (single_agent.py leases + releases its own device — even on failure/timeout):
 cd swarm-eval
-uv run python single_agent.py devices/rasp_dummy.yaml --model anthropic/claude-sonnet-4-5-20250929
+uv run python single_agent.py devices/rasp_dummy.yaml
 ```
 
-What happens: the launcher **leases** a device from the broker and injects its connection
-contract; the agent's setup solver stages that contract into the sandbox and connects over adb,
-inspects the APK with the baked static tools (jadx/apktool/androguard), and attempts the bypass
-with frida/objection; the self-report scorer reads the agent's final `RASP_BYPASS: SUCCESS|FAILURE`
-line; the launcher **releases** the device. The transcript + scored self-report land in
-`swarm-eval/logs/<run-id>/`.
-
-> The agent unit (`dynamic_agent.py`) never talks to the broker itself — a contract is always
-> injected by a launcher. Running `uv run inspect eval dynamic_agent.py` directly **fails fast**
-> with a clear message; go through `single_agent.py` (or `swarm.py`, §3).
-
-Useful knobs (`uv run python single_agent.py --help` for all):
+The transcript + scored self-report land in `swarm-eval/logs/<run-id>/` (open with
+`uv run inspect view`). A single agent is just the swarm at **N=1**; the multi-agent form is:
 
 ```bash
-# a different device-spec is the ONLY change needed to attack a different app (apk-agnostic):
-uv run python single_agent.py devices/dbs.yaml --model anthropic/claude-sonnet-4-5-20250929
-
-# tighter fail-fast so a hung/empty provider releases the device sooner (default 1800s):
-uv run python single_agent.py devices/rasp_dummy.yaml --time-limit 600 --message-limit 60
+uv run python swarm.py devices/rasp_dummy.yaml --workers 3    # N workers + a shared board + arbiter
 ```
 
-**Targeting a different APK.** The eval is APK-agnostic: the target is defined ENTIRELY by its
-device yaml. To point the probe at a new app: drop the APK at `apks/<app>/<app>.apk`, add
-`devices/<app>.yaml` (copy an existing one, incl. its `app:` mission block), and pass that yaml
-— no Python or mission edits.
+## Running custom evals (YAML)
 
-> Single agent is just the swarm at **N=1**. You can equally run it through the swarm launcher:
-> `uv run python swarm.py devices/rasp_dummy.yaml --workers 1` (§3) — same per-run path, plus a
-> swarm-id artifact folder + a (one-participant) messageboard.
+The target is defined **entirely by a device-spec YAML** ([`devices/*.yaml`](devices/)) — the harness
+never branches per app. Each spec is **two tiers**:
 
----
+- **Top-level scalars** — read by the **bash device layer** (`bin/_spec.sh`, `bin/_provision.sh`):
+  `name`, `device_profile`, `system_image`, `api`, `ram_mb`, `target_apk`, `provision`, `frida`, … .
+  These boot and provision the emulator to _t=0_.
+- **A nested `app:` block** — read _only_ by the **Python harness** (`swarm_eval/target.py`) and
+  ignored by bash: `package`, `label`, `launch_activity`, `frida_mode`, and the free-text
+  `objective` / `success_signal` / `details` that become the agent's mission.
 
-## 3. Run a multi-agent (swarm) test against an APK
-
-N worker agents work the **same** mission concurrently, coordinating through a host-side
-**messageboard**; a separate **arbiter** watches the board and issues the verdict. The
-**launcher** (`swarm.py`) mints a swarm-id, creates the board, pre-acquires one device per
-worker, starts N `inspect eval` runs + the arbiter, and collates everything under
-`logs/<swarm-id>/`.
+**To point the probe at a new app:** drop its APK at `apks/<app>/<app>.apk`, copy an existing
+`devices/<app>.yaml` (edit the top-level `target_apk` + the `app:` block), and pass that YAML —
+no Python or mission edits:
 
 ```bash
-source bin/env.sh
-bin/broker start
-
-cd swarm-eval
-uv run python swarm.py devices/rasp_dummy.yaml --workers 3 \
-    --model anthropic/claude-sonnet-4-5-20250929 \
-    --time-limit 1200 \      # per-run wall-clock cap (seconds)
-    --budget 2700            # whole-swarm wall-clock budget (seconds)
+uv run python single_agent.py devices/<app>.yaml --model anthropic/<other-model>
 ```
 
-Each worker needs its own device, so `--workers` must be **≤ the broker cap** (default 3); the
-launcher pre-acquires up to the cap and fails fast otherwise. On completion the launcher prints
-the verdict and the artifact folder:
+`--model` is the **model-sweep lever**: the keyless sandbox Claude Code proxies to whatever host
+model you name (default `anthropic/claude-sonnet-4-5-20250929`), so swapping to another Anthropic
+model — or a cross-vendor `<provider>/<model>` — is a one-flag change.
 
-```
-swarm <swarm-id>: SUCCESS — <reason>
-  workers:  worker-1, worker-2, worker-3
-  artifact: swarm-eval/logs/<swarm-id>  (transcripts + messageboard/)
-```
+> **`<WIP>` — YAML-declared runs.** Run knobs (`--model`, `--workers`, `--time-limit`, `--budget`)
+> are still **CLI flags** today. The replicability goal is to fold them into the device YAML so a
+> run is fully declared by one file. The open design question is how to **split the YAML by
+> permission** — which keys an eval author may edit vs. which are locked to the harness.
+> Context-seed: [`.scratch/yaml-config-extension/`](.scratch/yaml-config-extension/).
 
-Exit code: `0` on a SUCCESS verdict, `1` on FAILURE (ran fine, didn't crack it), `2` on a setup
-failure. The device yaml is the required positional target (apk-agnostic). Common flags: `--cap`,
-`--message-limit`, `--grace`, `--board-dir` / `--log-dir`. See `uv run python swarm.py --help`.
+## For coding agents
 
-The `--model` flag is the **model-sweep** lever: the sandbox's keyless CC proxies to whatever
-host provider model you name, so swapping models is a one-flag change.
+Working in this repo with an agent? Start from [`CLAUDE.md`](CLAUDE.md) (orientation),
+[`CONTEXT.md`](CONTEXT.md) (the domain vocabulary — use its terms), and
+[`docs/agents/`](docs/agents/) (issue-tracker + domain-doc conventions).
 
----
+## Architecture
 
-## Where results land
+Two deliberately separate halves:
 
-- **Single agent:** `swarm-eval/logs/*.eval` (open with `uv run inspect view`).
-- **Swarm:** `swarm-eval/logs/<swarm-id>/` — every worker + arbiter transcript **and** the saved
-  messageboard, so one run = transcripts + the conversation in a single artifact folder.
+| Layer | Where | What |
+|-------|-------|------|
+| **Device layer** | [`bin/`](bin/README.md), `devices/`, `apks/` | Pure-bash, **Inspect-free** emulator broker: turns a device-spec into a booted, rooted, provisioned emulator and hands it out under a cap. |
+| **Inspect layer** | [`swarm-eval/`](swarm-eval/README.md) | The `swarm_eval` package: bridged Claude Code agents, the launchers (`single_agent.py`, `swarm.py`), the messageboard, and the arbiter. |
 
-## More
+Decisions behind the split live in [`docs/adr/`](docs/adr/); specs + tickets under `.scratch/<feature>/`;
+a from-scratch manual device bring-up in [`RUNBOOK.md`](RUNBOOK.md).
 
-- [`CONTEXT.md`](CONTEXT.md) — domain model and vocabulary (target ladder, dynamic vs static,
-  the swarm model).
-- [`RUNBOOK.md`](RUNBOOK.md) — manual, from-scratch emulator bring-up (and the known AVD/boot
-  gotchas).
-- `docs/adr/` — architecture decisions. `.scratch/<feature>/` — specs + tickets.
+> The public project is **android-swarm**; the in-repo Python package and paths are still named
+> `swarm_eval` / `swarm-eval/` (rename deferred — see [`.scratch/codebase-cleanup/`](.scratch/codebase-cleanup/)).
