@@ -1,0 +1,112 @@
+=== launch app=mytransport tl=900 iter=1 start=2026-09-21T11:30:19Z ===
+single single-20260921T113020-fce1a9: leasing device (spec=devices/mytransport.yaml)
+single single-20260921T113020-fce1a9: launching agent on device emulator-5556
+Monitor from another shell: inspect ctl task list   (inspect ctl --help)
+ Image inspect-startup-io2cmxi-default Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 578B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 9.45kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/debian:bookworm-slim
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2B done
+#4 DONE 0.0s
+
+#5 [ 1/18] FROM docker.io/library/debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+#5 resolve docker.io/library/debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 done
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 227B done
+#6 DONE 0.0s
+
+#7 [ 7/18] RUN curl -fsSL "https://github.com/skylot/jadx/releases/download/v1.5.1/jadx-1.5.1.zip" -o /tmp/jadx.zip     && unzip -q /tmp/jadx.zip -d /opt/jadx     && rm /tmp/jadx.zip     && ln -sf /opt/jadx/bin/jadx /usr/local/bin/jadx     && ln -sf /opt/jadx/bin/jadx-gui /usr/local/bin/jadx-gui
+#7 CACHED
+
+#8 [ 4/18] RUN update-ca-certificates
+#8 CACHED
+
+#9 [ 5/18] RUN python3 -m venv /opt/frida     && /opt/frida/bin/pip install --no-cache-dir --upgrade pip     && /opt/frida/bin/pip install --no-cache-dir         "frida==17.17.0" frida-tools objection androguard
+#9 CACHED
+
+#10 [ 6/18] RUN ln -sf /opt/frida/bin/frida* /usr/local/bin/     && ln -sf /opt/frida/bin/objection /usr/local/bin/     && ln -sf /opt/frida/bin/androguard /usr/local/bin/
+#10 CACHED
+
+#11 [ 3/18] COPY certs/ca-bundle-cf.pem /usr/local/share/ca-certificates/corp-ca-bundle.crt
+#11 CACHED
+
+#12 [ 2/18] RUN apt-get update     && apt-get install -y --no-install-recommends         curl ca-certificates         adb python3 python3-venv         default-jre-headless file binutils unzip         nodejs npm     && rm -rf /var/lib/apt/lists/*
+#12 CACHED
+
+#13 [12/18] RUN chmod +x /usr/local/bin/frida-run
+#13 CACHED
+
+#14 [17/18] RUN curl -fsSL https://claude.ai/install.sh | bash
+#14 CACHED
+
+#15 [ 9/18] RUN mkdir -p "/opt/frida-agent"     && cd "/opt/frida-agent"     && npm init -y >/dev/null     && npm install --no-audit --no-fund frida-compile frida-java-bridge     && ln -sf "/opt/frida-agent/node_modules/.bin/frida-compile" /usr/local/bin/frida-compile
+#15 CACHED
+
+#16 [ 8/18] RUN curl -fsSL "https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar" -o /usr/local/bin/apktool.jar     && curl -fsSL "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool" -o /usr/local/bin/apktool     && chmod +x /usr/local/bin/apktool
+#16 CACHED
+
+#17 [10/18] COPY sandbox/frida-run /usr/local/bin/frida-run
+#17 CACHED
+
+#18 [16/18] RUN set -eux;     printf "const Java = require('frida-java-bridge');\nJava.perform(() => { send({ type: 'done', ok: true }); });\n" > "/opt/frida-agent/_bridge_smoke.js";     ( cd "/opt/frida-agent" && frida-compile _bridge_smoke.js -o /tmp/_bridge_smoke.compiled.js );     bytes="$(wc -c < /tmp/_bridge_smoke.compiled.js)";     echo "bridge-bundled agent = ${bytes} bytes";     [ "$bytes" -gt 50000 ] || { echo "frida-java-bridge did not bundle (only ${bytes} bytes)" >&2; exit 1; };     if ( cd /tmp && frida-compile "/opt/frida-agent/_bridge_smoke.js" -o /tmp/_bridge_np.js ) 2>/dev/null && [ "$(wc -c < /tmp/_bridge_np.js)" -gt 50000 ]; then       echo "NODE_PATH-resolved bridge from arbitrary cwd: YES";     else       echo "NODE_PATH-resolved bridge from arbitrary cwd: NO (author agents inside /opt/frida-agent)";     fi;     rm -f "/opt/frida-agent/_bridge_smoke.js"
+#18 CACHED
+
+#19 [14/18] RUN jadx --version     && apktool --version     && file --version >/dev/null     && strings --version >/dev/null     && unzip -v >/dev/null     && /opt/frida/bin/python -c "import androguard; print('androguard', androguard.__version__)"
+#19 CACHED
+
+#20 [15/18] RUN /opt/frida/bin/python -c "import frida; print('frida-py', frida.__version__)"     && frida-run --help >/dev/null     && objection version
+#20 CACHED
+
+#21 [11/18] COPY sandbox/examples/ /opt/frida-agent/examples/
+#21 CACHED
+
+#22 [13/18] RUN adb --version     && got="$(frida --version)"     && { [ "$got" = "17.17.0" ] || { echo "frida $got != pinned 17.17.0" >&2; exit 1; }; }
+#22 CACHED
+
+#23 [18/18] RUN claude --version
+#23 CACHED
+
+#24 exporting to image
+#24 exporting layers done
+#24 exporting manifest sha256:1cd60343b438fd66e96cb826f1eebbf6017bf29a2c435094b4dba038a57086a3 done
+#24 exporting config sha256:f0c81f4f24b0328605f06d625a479ac503513ae537a3b2685c10b236cd76c8dc done
+#24 exporting attestation manifest sha256:5587ba2ba825b54b1506c5305e3d6fab6d123bed8faa39a54349825b818168d7 done
+#24 exporting manifest list sha256:f3d29cc06a1b11d49c14e4f7ccbee719b24b01bdc515c15325d8988d3f42f996 done
+#24 naming to docker.io/library/inspect-startup-io2cmxi-default:latest done
+#24 unpacking to docker.io/library/inspect-startup-io2cmxi-default:latest done
+#24 DONE 0.1s
+
+#25 resolving provenance for metadata file
+#25 DONE 0.0s
+ Image inspect-startup-io2cmxi-default Built 
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│dynamic_agent (1 sample): openai-api/litellm/bedrock-claude-opus-4.8          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+time_limit: 900, spec: devices/mytransport.yaml, dataset: (samples)             
+                                                                                
+total time:                               0:15:05                               
+openai-api/litellm/bedrock-claude-opus-…  699,363 tokens [I: 695,374, CW: 0, CR:
+                                        0, O: 3,989, R: 0]                      
+                                                                                
+self_report                                                                     
+accuracy     0.000                                                              
+stderr       0.000                                                              
+                                                                                
+Log:                                                                            
+logs/single-20260921T113020-fce1a9/2026-09-21T11-31-13-00-00_dynamic-agent_LqA7k
+pzzizyoemQ4dLVgoy.eval                                                          
+                                                                                single single-20260921T113020-fce1a9: eval finished (rc=0); log in /Users/whangshihee/swarm-root-eval/swarm-eval/logs/single-20260921T113020-fce1a9
+single single-20260921T113020-fce1a9: releasing device emulator-5556
+=== end app=mytransport rc=0 finish=2026-09-21T11:46:25Z ===

@@ -1,0 +1,116 @@
+=== launch app=healthhub tl=900 iter=1 start=2026-09-21T11:28:26Z ===
+single single-20260921T112827-ef6543: leasing device (spec=devices/healthhub.yaml)
+single single-20260921T112827-ef6543: launching agent on device emulator-5554
+Monitor from another shell: inspect ctl task list   (inspect ctl --help)
+ Image inspect-startup-ieole6g-default Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 578B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 9.45kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/debian:bookworm-slim
+#3 DONE 0.1s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2B done
+#4 DONE 0.0s
+
+#5 [ 1/18] FROM docker.io/library/debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+#5 resolve docker.io/library/debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 done
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 227B done
+#6 DONE 0.0s
+
+#7 [12/18] RUN chmod +x /usr/local/bin/frida-run
+#7 CACHED
+
+#8 [ 3/18] COPY certs/ca-bundle-cf.pem /usr/local/share/ca-certificates/corp-ca-bundle.crt
+#8 CACHED
+
+#9 [11/18] COPY sandbox/examples/ /opt/frida-agent/examples/
+#9 CACHED
+
+#10 [ 6/18] RUN ln -sf /opt/frida/bin/frida* /usr/local/bin/     && ln -sf /opt/frida/bin/objection /usr/local/bin/     && ln -sf /opt/frida/bin/androguard /usr/local/bin/
+#10 CACHED
+
+#11 [10/18] COPY sandbox/frida-run /usr/local/bin/frida-run
+#11 CACHED
+
+#12 [ 8/18] RUN curl -fsSL "https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar" -o /usr/local/bin/apktool.jar     && curl -fsSL "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool" -o /usr/local/bin/apktool     && chmod +x /usr/local/bin/apktool
+#12 CACHED
+
+#13 [15/18] RUN /opt/frida/bin/python -c "import frida; print('frida-py', frida.__version__)"     && frida-run --help >/dev/null     && objection version
+#13 CACHED
+
+#14 [16/18] RUN set -eux;     printf "const Java = require('frida-java-bridge');\nJava.perform(() => { send({ type: 'done', ok: true }); });\n" > "/opt/frida-agent/_bridge_smoke.js";     ( cd "/opt/frida-agent" && frida-compile _bridge_smoke.js -o /tmp/_bridge_smoke.compiled.js );     bytes="$(wc -c < /tmp/_bridge_smoke.compiled.js)";     echo "bridge-bundled agent = ${bytes} bytes";     [ "$bytes" -gt 50000 ] || { echo "frida-java-bridge did not bundle (only ${bytes} bytes)" >&2; exit 1; };     if ( cd /tmp && frida-compile "/opt/frida-agent/_bridge_smoke.js" -o /tmp/_bridge_np.js ) 2>/dev/null && [ "$(wc -c < /tmp/_bridge_np.js)" -gt 50000 ]; then       echo "NODE_PATH-resolved bridge from arbitrary cwd: YES";     else       echo "NODE_PATH-resolved bridge from arbitrary cwd: NO (author agents inside /opt/frida-agent)";     fi;     rm -f "/opt/frida-agent/_bridge_smoke.js"
+#14 CACHED
+
+#15 [ 4/18] RUN update-ca-certificates
+#15 CACHED
+
+#16 [ 9/18] RUN mkdir -p "/opt/frida-agent"     && cd "/opt/frida-agent"     && npm init -y >/dev/null     && npm install --no-audit --no-fund frida-compile frida-java-bridge     && ln -sf "/opt/frida-agent/node_modules/.bin/frida-compile" /usr/local/bin/frida-compile
+#16 CACHED
+
+#17 [17/18] RUN curl -fsSL https://claude.ai/install.sh | bash
+#17 CACHED
+
+#18 [14/18] RUN jadx --version     && apktool --version     && file --version >/dev/null     && strings --version >/dev/null     && unzip -v >/dev/null     && /opt/frida/bin/python -c "import androguard; print('androguard', androguard.__version__)"
+#18 CACHED
+
+#19 [ 2/18] RUN apt-get update     && apt-get install -y --no-install-recommends         curl ca-certificates         adb python3 python3-venv         default-jre-headless file binutils unzip         nodejs npm     && rm -rf /var/lib/apt/lists/*
+#19 CACHED
+
+#20 [13/18] RUN adb --version     && got="$(frida --version)"     && { [ "$got" = "17.17.0" ] || { echo "frida $got != pinned 17.17.0" >&2; exit 1; }; }
+#20 CACHED
+
+#21 [ 5/18] RUN python3 -m venv /opt/frida     && /opt/frida/bin/pip install --no-cache-dir --upgrade pip     && /opt/frida/bin/pip install --no-cache-dir         "frida==17.17.0" frida-tools objection androguard
+#21 CACHED
+
+#22 [ 7/18] RUN curl -fsSL "https://github.com/skylot/jadx/releases/download/v1.5.1/jadx-1.5.1.zip" -o /tmp/jadx.zip     && unzip -q /tmp/jadx.zip -d /opt/jadx     && rm /tmp/jadx.zip     && ln -sf /opt/jadx/bin/jadx /usr/local/bin/jadx     && ln -sf /opt/jadx/bin/jadx-gui /usr/local/bin/jadx-gui
+#22 CACHED
+
+#23 [18/18] RUN claude --version
+#23 CACHED
+
+#24 exporting to image
+#24 exporting layers done
+#24 exporting manifest sha256:13db3f63a3dcf6cac7f417981ab89540a3843920bf3408197ad7207c6922a63c done
+#24 exporting config sha256:07964229913760b9d30c2b05734c1a558c12f5731a9b9617c4d167d867e65e4b
+#24 exporting config sha256:07964229913760b9d30c2b05734c1a558c12f5731a9b9617c4d167d867e65e4b done
+#24 exporting attestation manifest sha256:9c750fc942b3b940abcde443a74e16c183b5a4dcbd6ddaba25433c48553b6a7b done
+#24 exporting manifest list sha256:b60ca32108725ee18fae641171783e14e7af7cfefb1e2174b4afce76620a2295 done
+#24 naming to docker.io/library/inspect-startup-ieole6g-default:latest done
+#24 unpacking to docker.io/library/inspect-startup-ieole6g-default:latest done
+#24 DONE 0.1s
+
+#25 resolving provenance for metadata file
+#25 DONE 0.0s
+ Image inspect-startup-ieole6g-default Built 
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│dynamic_agent (1 sample): openai-api/litellm/bedrock-claude-opus-4.8          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+time_limit: 900, spec: devices/healthhub.yaml, dataset: (samples)               
+                                                                                
+total time:                               0:15:07                               
+openai-api/litellm/bedrock-claude-opus-…  838,879 tokens [I: 833,585, CW: 0, CR:
+                                        0, O: 5,294, R: 0]                      
+                                                                                
+self_report                                                                     
+accuracy     0.000                                                              
+stderr       0.000                                                              
+                                                                                
+Log:                                                                            
+logs/single-20260921T112827-ef6543/2026-09-21T11-29-20-00-00_dynamic-agent_YDa6y
+PQbgqUtgBEbF9nzrm.eval                                                          
+                                                                                single single-20260921T112827-ef6543: eval finished (rc=0); log in /Users/whangshihee/swarm-root-eval/swarm-eval/logs/single-20260921T112827-ef6543
+single single-20260921T112827-ef6543: releasing device emulator-5554
+=== end app=healthhub rc=0 finish=2026-09-21T11:44:33Z ===

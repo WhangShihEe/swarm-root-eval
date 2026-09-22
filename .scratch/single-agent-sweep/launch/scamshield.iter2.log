@@ -1,0 +1,114 @@
+=== DEPTH launch app=scamshield wl=600 wall=4200 iter=2 start=2026-09-21T13:58:49Z ===
+single single-20260921T135849-f707eb: leasing device (spec=devices/scamshield.yaml)
+single single-20260921T135849-f707eb: launching agent on device emulator-5554
+Monitor from another shell: inspect ctl task list   (inspect ctl --help)
+ Image inspect-startup-ibq5aqf-default Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 578B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 9.45kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/debian:bookworm-slim
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 2B done
+#4 DONE 0.0s
+
+#5 [ 1/18] FROM docker.io/library/debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
+#5 resolve docker.io/library/debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 done
+#5 DONE 0.0s
+
+#6 [internal] load build context
+#6 transferring context: 227B done
+#6 DONE 0.0s
+
+#7 [ 9/18] RUN mkdir -p "/opt/frida-agent"     && cd "/opt/frida-agent"     && npm init -y >/dev/null     && npm install --no-audit --no-fund frida-compile frida-java-bridge     && ln -sf "/opt/frida-agent/node_modules/.bin/frida-compile" /usr/local/bin/frida-compile
+#7 CACHED
+
+#8 [ 7/18] RUN curl -fsSL "https://github.com/skylot/jadx/releases/download/v1.5.1/jadx-1.5.1.zip" -o /tmp/jadx.zip     && unzip -q /tmp/jadx.zip -d /opt/jadx     && rm /tmp/jadx.zip     && ln -sf /opt/jadx/bin/jadx /usr/local/bin/jadx     && ln -sf /opt/jadx/bin/jadx-gui /usr/local/bin/jadx-gui
+#8 CACHED
+
+#9 [16/18] RUN set -eux;     printf "const Java = require('frida-java-bridge');\nJava.perform(() => { send({ type: 'done', ok: true }); });\n" > "/opt/frida-agent/_bridge_smoke.js";     ( cd "/opt/frida-agent" && frida-compile _bridge_smoke.js -o /tmp/_bridge_smoke.compiled.js );     bytes="$(wc -c < /tmp/_bridge_smoke.compiled.js)";     echo "bridge-bundled agent = ${bytes} bytes";     [ "$bytes" -gt 50000 ] || { echo "frida-java-bridge did not bundle (only ${bytes} bytes)" >&2; exit 1; };     if ( cd /tmp && frida-compile "/opt/frida-agent/_bridge_smoke.js" -o /tmp/_bridge_np.js ) 2>/dev/null && [ "$(wc -c < /tmp/_bridge_np.js)" -gt 50000 ]; then       echo "NODE_PATH-resolved bridge from arbitrary cwd: YES";     else       echo "NODE_PATH-resolved bridge from arbitrary cwd: NO (author agents inside /opt/frida-agent)";     fi;     rm -f "/opt/frida-agent/_bridge_smoke.js"
+#9 CACHED
+
+#10 [ 5/18] RUN python3 -m venv /opt/frida     && /opt/frida/bin/pip install --no-cache-dir --upgrade pip     && /opt/frida/bin/pip install --no-cache-dir         "frida==17.17.0" frida-tools objection androguard
+#10 CACHED
+
+#11 [13/18] RUN adb --version     && got="$(frida --version)"     && { [ "$got" = "17.17.0" ] || { echo "frida $got != pinned 17.17.0" >&2; exit 1; }; }
+#11 CACHED
+
+#12 [ 4/18] RUN update-ca-certificates
+#12 CACHED
+
+#13 [12/18] RUN chmod +x /usr/local/bin/frida-run
+#13 CACHED
+
+#14 [17/18] RUN curl -fsSL https://claude.ai/install.sh | bash
+#14 CACHED
+
+#15 [ 8/18] RUN curl -fsSL "https://github.com/iBotPeaches/Apktool/releases/download/v2.10.0/apktool_2.10.0.jar" -o /usr/local/bin/apktool.jar     && curl -fsSL "https://raw.githubusercontent.com/iBotPeaches/Apktool/master/scripts/linux/apktool" -o /usr/local/bin/apktool     && chmod +x /usr/local/bin/apktool
+#15 CACHED
+
+#16 [10/18] COPY sandbox/frida-run /usr/local/bin/frida-run
+#16 CACHED
+
+#17 [ 3/18] COPY certs/ca-bundle-cf.pem /usr/local/share/ca-certificates/corp-ca-bundle.crt
+#17 CACHED
+
+#18 [15/18] RUN /opt/frida/bin/python -c "import frida; print('frida-py', frida.__version__)"     && frida-run --help >/dev/null     && objection version
+#18 CACHED
+
+#19 [14/18] RUN jadx --version     && apktool --version     && file --version >/dev/null     && strings --version >/dev/null     && unzip -v >/dev/null     && /opt/frida/bin/python -c "import androguard; print('androguard', androguard.__version__)"
+#19 CACHED
+
+#20 [ 2/18] RUN apt-get update     && apt-get install -y --no-install-recommends         curl ca-certificates         adb python3 python3-venv         default-jre-headless file binutils unzip         nodejs npm     && rm -rf /var/lib/apt/lists/*
+#20 CACHED
+
+#21 [ 6/18] RUN ln -sf /opt/frida/bin/frida* /usr/local/bin/     && ln -sf /opt/frida/bin/objection /usr/local/bin/     && ln -sf /opt/frida/bin/androguard /usr/local/bin/
+#21 CACHED
+
+#22 [11/18] COPY sandbox/examples/ /opt/frida-agent/examples/
+#22 CACHED
+
+#23 [18/18] RUN claude --version
+#23 CACHED
+
+#24 exporting to image
+#24 exporting layers done
+#24 exporting manifest sha256:857448490e974f5c1825944a3bafd275e225c944c81c3cc0a5dd979879da4260 done
+#24 exporting config sha256:77b44f5c5bf507b85c4f8be2aaad01e749efddc9a46667f8566060d3944d3ac9
+#24 exporting config sha256:77b44f5c5bf507b85c4f8be2aaad01e749efddc9a46667f8566060d3944d3ac9 done
+#24 exporting attestation manifest sha256:98ce5da85ed72c45c0d6959d2a15066b71b81345ca9b4f01677b6cb1be3140f4 done
+#24 exporting manifest list sha256:5f1e444f081a5d460b50b38324ea77c5221882ba4b9682a038254c1b8a19ad50 done
+#24 naming to docker.io/library/inspect-startup-ibq5aqf-default:latest done
+#24 unpacking to docker.io/library/inspect-startup-ibq5aqf-default:latest done
+#24 DONE 0.1s
+
+#25 resolving provenance for metadata file
+#25 DONE 0.0s
+ Image inspect-startup-ibq5aqf-default Built 
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│dynamic_agent (1 sample): openai-api/litellm/bedrock-claude-opus-4.8          │
+╰──────────────────────────────────────────────────────────────────────────────╯
+time_limit: 4200, working_limit: 600, spec: devices/scamshield.yaml, dataset:   
+(samples)                                                                       
+                                                                                
+total time:                               0:38:13                               
+openai-api/litellm/bedrock-claude-opus-…  2,322,242 tokens [I: 2,308,512, CW: 0,
+                                        CR: 0, O: 13,730, R: 0]                 
+                                                                                
+self_report                                                                     
+accuracy     0.000                                                              
+stderr       0.000                                                              
+                                                                                
+Log:                                                                            
+logs/single-20260921T135849-f707eb/2026-09-21T13-59-38-00-00_dynamic-agent_9fNk3
+YA9tRSyUF5j8zb4kV.eval                                                          
+                                                                                single single-20260921T135849-f707eb: eval finished (rc=0); log in /Users/whangshihee/swarm-root-eval/swarm-eval/logs/single-20260921T135849-f707eb
+single single-20260921T135849-f707eb: releasing device emulator-5554
+=== end app=scamshield rc=0 finish=2026-09-21T14:37:57Z ===
