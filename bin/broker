@@ -2,7 +2,7 @@
 # broker — the standing device broker (ticket 06) over the pool engine (bin/_pool.sh).
 #
 # Start it ONCE before an eval; it persists across requests, owns the emulator pool, and
-# enforces the cap (POOL_CAP, default 3). Clients are separate `bin/broker <verb>` invocations
+# enforces the cap (POOL_CAP, default 6). Clients are separate `bin/broker <verb>` invocations
 # that reach the running broker over its file-backed queue under BROKER_DIR.
 #
 #   bin/broker start [--profile frida-only|writable-system] [--foreground]

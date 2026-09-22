@@ -19,6 +19,17 @@ Apple Silicon M4 Max, macOS 26.5, SDK at `~/Library/Android/sdk`. Pinned tool ve
 `system-images;android-35;google_apis;arm64-v8a` (the playstore variant is **not**
 rootable — avoid it).
 
+> **Image standard (android-35).** The standardized emulator image is **android-35** (rev 9,
+> the rootable `google_apis` variant). The historical evidence blocks below dated **2026-09-01**
+> were captured on the now-retired **API-37.1** image (`google_apis_ps16k`) and quote
+> `target=android-37.1` / `tag.ids=…page_size_16kb`; they are kept **verbatim as evidence**,
+> flagged inline, and expect `target=android-35` / `tag.ids=google_apis` (no `page_size_16kb`)
+> on re-verification. Do not read those quoted values as the current image. One stray config
+> reference remains out of scope here: `versions.txt`'s `SDK_PLATFORM_API=37.1` is **not** the
+> emulator image (that is `SYSTEM_IMAGE`, already android-35) and is flagged for the env
+> workstream — see the `versions.txt` NOTE and `.scratch/env-hardening/`; `bin/doctor` does not
+> read that var.
+
 > ⚠️ **GOTCHA (root-caused 2026-09-01): use the right `cmdline-tools` or the AVD boots to a
 > black screen.** A from-scratch cold boot of an AVD created by **cmdline-tools 12.0** stalls:
 > `WARNING | hvf is not enabled on this aarch64 host`, then repeated

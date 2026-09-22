@@ -82,8 +82,11 @@ the term as defined here; don't drift to synonyms. Decisions that shaped these l
 - **Messageboard** — the swarm's shared state: a **host-side, append-only, one-file-per-message
   directory** (the broker's queue idiom). Agents post/read via `inspect_swe` **`bridged_tools`**
   (host-side tools over MCP), not Inspect's per-sample `store`.
-- **Arbiter** — a dedicated agent-run that watches the messageboard, decides the mission is
-  **done**, and issues the verdict. The swarm **oracle** for now.
+- **Arbiter** — watches the messageboard, decides the mission is **done**, and issues the
+  verdict. As shipped (ticket 05b) it is a **host-side rubric** (`evaluate_board` in
+  `conductor.py`), not a separate bridged run — an LLM can't be trusted to honour a wall-clock
+  budget and the verdict is machine-decidable; the original "own bridged run" design is deferred.
+  The swarm **oracle** for now.
 - **Launcher** (a.k.a. the **Conductor** — the `Conductor` class in `swarm-eval`'s
   `conductor.py`, ticket 05b) — the external orchestrator (outside Inspect): starts the N
   agent-runs, creates the messageboard, links broker devices into runs that need them, applies

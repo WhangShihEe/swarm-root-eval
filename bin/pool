@@ -9,7 +9,7 @@
 #   bin/pool down-all
 #   bin/pool demo    --spec devices/rootbeer.yaml   # acquire 2, print serials, release both
 #
-# Cap is POOL_CAP (default 3); state lives under POOL_DIR (default <repo>/.pool).
+# Cap is POOL_CAP (default 6); state lives under POOL_DIR (default <repo>/.pool).
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
