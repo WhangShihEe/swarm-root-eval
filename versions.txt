@@ -3,6 +3,11 @@
 # (Apple Silicon M4 Max, arm64). `bin/doctor` asserts the live toolchain matches.
 
 # Android SDK
+# NOTE (android-35 migration, 2026-09-22): value NOT reconciled to 35 and possibly stale.
+# `bin/doctor` does not read this var, and no android-35 platform is installed (installed:
+# platforms;android-37.0). Likely names a separately-installed build/compile SDK platform, not
+# the emulator image (that is SYSTEM_IMAGE below). Resolve: confirm it's a real installed
+# platform (correct to the installed rev or drop if unused) vs. a stale image label (-> 35).
 SDK_PLATFORM_API=37.1
 SYSTEM_IMAGE="system-images;android-35;google_apis;arm64-v8a"
 SYSTEM_IMAGE_REVISION=9          # rootable google_apis image; the playstore variant is NOT rootable

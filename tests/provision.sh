@@ -84,7 +84,7 @@ check "FRIDA_SERVER override wins" "$got" "/custom/fs"
 rm -rf "$FH"
 
 # --- new optional spec fields: target_apk + toggles --------------------------------------
-IMG="system-images;android-37.1;google_apis_ps16k;arm64-v8a"
+IMG="system-images;android-35;google_apis;arm64-v8a"
 FAKE_SDK="$(mktemp -d)"; mkdir -p "$FAKE_SDK/${IMG//;//}"
 printf 'Pkg.Revision=9\n' > "$FAKE_SDK/${IMG//;//}/source.properties"
 base_spec() {  # write the 7 required keys to $1
@@ -92,7 +92,7 @@ base_spec() {  # write the 7 required keys to $1
 name: pixel-a37
 device_profile: pixel
 system_image: "$IMG"
-api: "37.1"
+api: "35"
 ram_mb: 4096
 cores: 4
 data_size_mb: 8192

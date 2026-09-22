@@ -16,7 +16,7 @@ here so the substrate is understood before issues 03–05 script it. Also record
 
 Apple Silicon M4 Max, macOS 26.5, SDK at `~/Library/Android/sdk`. Pinned tool versions live in
 `versions.txt`; `bin/doctor` asserts them. Rootable image:
-`system-images;android-37.1;google_apis_ps16k;arm64-v8a` (the playstore variant is **not**
+`system-images;android-35;google_apis;arm64-v8a` (the playstore variant is **not**
 rootable — avoid it).
 
 > ⚠️ **GOTCHA (root-caused 2026-09-01): use the right `cmdline-tools` or the AVD boots to a
@@ -26,7 +26,7 @@ rootable — avoid it).
 > **not** HVF, the host, or the agent harness — it's a **broken AVD config**: cmdline-tools
 > 12.0 can't parse this image's SDK-XML **v4** `package.xml` (the `unexpected element abis …
 > Expected api-level` warnings), so `avdmanager create` writes **`target=android-0`** into
-> `config.ini` instead of `android-37.1`. That api-0 AVD can't boot (black screen), which is
+> `config.ini` instead of `android-35`. That api-0 AVD can't boot (black screen), which is
 > exactly what Android Studio's Device Manager showed ("API 0") until the API level was set by
 > hand.
 >
@@ -40,6 +40,8 @@ rootable — avoid it).
 > **Confirmed (2026-09-01):** a corrected AVD (23.0 tools, `target=android-37.1`) cold-boots
 > cleanly in a real terminal — `Boot completed in 13077 ms`, no `hvf is not enabled`. So the
 > only failure mode is the api-0 AVD; a correctly-created AVD boots fine.
+> 
+> **Note (2026-09-22, android-35 migration):** the `target=android-37.1` / `tag.ids=…page_size_16kb` values and the boot timing above are from the now-retired API-37.1 image, kept verbatim as historical evidence pending re-verification on the standardized android-35 image (expect `target=android-35`, `tag.ids=google_apis`, no `page_size_16kb`).
 >
 > One operational footgun seen while confirming: launching a second `emulator … -port 5554`
 > without killing the first leaves the loser on **undiscoverable random ports** (adb only scans
@@ -67,7 +69,7 @@ in the commands below.
 # rejects anything too old to parse the v4 image XML. See the GOTCHA box above.
 avdmanager delete avd -n pixel-a37 2>/dev/null || true          # start from nothing
 echo "no" | avdmanager create avd -n pixel-a37 -k "$SYSTEM_IMAGE" -d pixel
-grep -E '^target=|^tag.ids=' ~/.android/avd/pixel-a37.avd/config.ini   # MUST show target=android-37.1
+grep -E '^target=|^tag.ids=' ~/.android/avd/pixel-a37.avd/config.ini   # MUST show target=android-35
 ```
 
 > If you see `Error: Package path is not valid` here, `$SYSTEM_IMAGE` is empty — you skipped
@@ -77,7 +79,7 @@ grep -E '^target=|^tag.ids=' ~/.android/avd/pixel-a37.avd/config.ini   # MUST sh
 
 - `-d pixel` = Pixel hardware profile. `echo "no"` declines the "custom hardware profile?"
   prompt. `Auto-selecting single ABI arm64-v8a` in the output is expected.
-- AVD lands in `~/.android/avd/pixel-a37.avd`. The `target=android-37.1` check is the guard
+- AVD lands in `~/.android/avd/pixel-a37.avd`. The `target=android-35` check is the guard
   against the api-0 black-screen boot.
 
 ## 2. Cold boot from nothing (headless), on an explicit port
@@ -175,7 +177,7 @@ from-scratch cold boots (2026-09-01), once the AVD was created with the 23.0 too
 
 | Step | Command | Status |
 |------|---------|--------|
-| 1 | `avdmanager create … -d pixel` | ⚠️ tool-sensitive — 23.0 tools give `target=android-37.1` (verified); 12.0 give `target=android-0` (broken). Fixed in step 1. |
+| 1 | `avdmanager create … -d pixel` | ⚠️ tool-sensitive — 23.0 tools give `target=android-37.1` (verified on the now-retired 37.1 image — re-verify on android-35); 12.0 give `target=android-0` (broken). Fixed in step 1. |
 | 2 | cold boot + readiness | ✅ live — corrected AVD, `Boot completed in 13077 ms`, `boot_completed=1`, `bootanim=stopped`, pm responsive |
 | 3 | `adb root` / `id` | ✅ live — `restarting adbd as root`, `uid=0(root) … context=…:su` |
 | 4 | frida-server + `frida-ps -U` | ✅ live — pushed 53 MB, running as root (pid 4619); client 17.17.0; `frida-ps -U` listed device processes |
@@ -190,7 +192,7 @@ from-scratch cold boots (2026-09-01), once the AVD was created with the 23.0 too
 **Question:** can this image give an agent a writable `/system` (for build.prop spoofing, a
 system CA cert, or a system `su`)?
 
-**Evidence observed on the running API-37 rootable image:**
+**Evidence observed on the running API-35 rootable image:**
 
 ```
 ro.build.type      = userdebug

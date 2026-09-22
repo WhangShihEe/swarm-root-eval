@@ -18,7 +18,7 @@ check(){ if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (want '$3', got '$2')"; 
 
 command -v yq >/dev/null 2>&1 || { echo "yq required for these tests (brew install yq)"; exit 2; }
 
-IMG="system-images;android-37.1;google_apis_ps16k;arm64-v8a"
+IMG="system-images;android-35;google_apis;arm64-v8a"
 
 # A fake SDK root with the image "installed" (just its source.properties marker).
 FAKE_SDK="$(mktemp -d)"; trap 'rm -rf "$FAKE_SDK"' EXIT
@@ -31,7 +31,7 @@ write_spec() {  # file, [omit-key]
     [ "$omit" = name ]           || echo "name: pixel-a37"
     [ "$omit" = device_profile ] || echo "device_profile: pixel"
     [ "$omit" = system_image ]   || echo "system_image: \"$IMG\""
-    [ "$omit" = api ]            || echo "api: \"37.1\""
+    [ "$omit" = api ]            || echo "api: \"35\""
     [ "$omit" = ram_mb ]         || echo "ram_mb: 4096"
     [ "$omit" = cores ]          || echo "cores: 4"
     [ "$omit" = data_size_mb ]   || echo "data_size_mb: 8192"
@@ -45,7 +45,7 @@ out="$(ANDROID_SDK_ROOT="$FAKE_SDK" bash -c '
   spec_load "'"$GOOD"'" || { echo "LOAD_FAILED rc=$?"; exit 1; }
   printf "%s|%s|%s|%s|%s|%s|%s\n" "$SPEC_NAME" "$SPEC_DEVICE_PROFILE" "$SPEC_SYSTEM_IMAGE" \
          "$SPEC_API" "$SPEC_RAM_MB" "$SPEC_CORES" "$SPEC_DATA_SIZE_MB"')"
-check "all SPEC_* exported" "$out" "pixel-a37|pixel|$IMG|37.1|4096|4|8192"
+check "all SPEC_* exported" "$out" "pixel-a37|pixel|$IMG|35|4096|4|8192"
 
 echo "== spec_load: writable_system launch profile (ticket 07) =="
 # SPEC_WRITABLE_SYSTEM drives the launch profile: absent => true (writable-/system default),
@@ -111,15 +111,15 @@ rm -f "$GOOD"
 
 echo "== cfg_get / cfg_set (config.ini helpers) =="
 CFG="$(mktemp)"
-printf 'target=android-37.1\nhw.ramSize=2048\n' > "$CFG"
+printf 'target=android-35\nhw.ramSize=2048\n' > "$CFG"
 check "cfg_get existing"   "$(cfg_get "$CFG" hw.ramSize)" "2048"
-check "avd_target"         "$(avd_target "$CFG")"         "android-37.1"
+check "avd_target"         "$(avd_target "$CFG")"         "android-35"
 cfg_set "$CFG" hw.ramSize 4096            # override existing
 check "cfg_set overrides"  "$(cfg_get "$CFG" hw.ramSize)" "4096"
 cfg_set "$CFG" hw.cpu.ncore 4            # append new
 check "cfg_set appends"    "$(cfg_get "$CFG" hw.cpu.ncore)" "4"
 # a dotted key must not accidentally match a different line
-check "target untouched"   "$(avd_target "$CFG")"         "android-37.1"
+check "target untouched"   "$(avd_target "$CFG")"         "android-35"
 rm -f "$CFG"
 
 echo

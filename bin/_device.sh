@@ -23,7 +23,7 @@ cfg_set() {
 # Escape a config key for use in a sed/grep BRE/ERE (its dots are literal here).
 _cfg_esc() { printf '%s' "$1" | sed 's/[.[\*^$]/\\&/g'; }
 
-# avd_target CONFIG_INI — echo the AVD's target= value (e.g. android-37.1). This is the
+# avd_target CONFIG_INI — echo the AVD's target= value (e.g. android-35). This is the
 # api-0 black-screen guard from RUNBOOK / ticket 02: a target of android-0 never boots.
 avd_target() { cfg_get "$1" target; }
 

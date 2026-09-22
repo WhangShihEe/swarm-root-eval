@@ -60,9 +60,9 @@ spec_load() {
       0) echo "spec: $k must be > 0" >&2; return 2 ;;
     esac
   done
-  # api is dotted-numeric (e.g. 37.1); it becomes the target=android-<api> assertion.
+  # api is dotted-numeric (e.g. 35); it becomes the target=android-<api> assertion.
   case "$SPEC_API" in
-    ''|*[!0-9.]*) echo "spec: api must be numeric (e.g. 37.1), got '$SPEC_API'" >&2; return 2 ;;
+    ''|*[!0-9.]*) echo "spec: api must be numeric (e.g. 35), got '$SPEC_API'" >&2; return 2 ;;
   esac
 
   # The system image must actually be installed, else the AVD create fails deep in

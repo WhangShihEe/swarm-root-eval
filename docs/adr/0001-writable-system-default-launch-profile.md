@@ -5,7 +5,7 @@
 ## Context
 
 Ticket 02's writable-`/system` recon (`RUNBOOK.md` → "Writable-`/system` verdict") proved
-that the API-37 rootable image *can* give an agent a writable `/system` — cold-boot with
+that the API-35 rootable image *can* give an agent a writable `/system` — cold-boot with
 `-writable-system`, `adb root`, `disable-verity`, reboot, `remount` → `/system` mounted RW
 via overlayfs (write / read-back / delete confirmed live). But it recorded the **Frida-only**
 profile (root shell + frida-server, `/system` untouched) as the **default** dynamic-agent
