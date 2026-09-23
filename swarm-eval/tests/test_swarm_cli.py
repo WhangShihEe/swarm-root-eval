@@ -10,7 +10,7 @@ import pytest
 import swarm as cli
 from swarm_eval.conductor import SwarmError, SwarmResult, Verdict
 
-YAML = "devices/healthhub.yaml"
+YAML = "configs/evals/healthhub.yaml"
 
 
 def test_spec_is_the_required_positional_target():
@@ -119,9 +119,11 @@ def test_cli_workers_and_model_override_the_eval_config():
     assert config.time_limit == 1800
 
 
-def test_legacy_yaml_falls_back_to_built_in_defaults():
-    # A legacy device yaml carries no run knobs → the SwarmConfig built-in defaults stand.
-    config = cli.build_config(cli.parse_args([YAML]))
+def test_eval_config_without_run_knobs_falls_back_to_built_in_defaults(tmp_path):
+    # An eval config that sets no run knobs → the SwarmConfig built-in defaults stand.
+    ev = tmp_path / "bare.yaml"
+    ev.write_text("app: rasp_dummy\ndevice: rasp_dummy\nworkers: dynamic\n", encoding="utf-8")
+    config = cli.build_config(cli.parse_args([str(ev)]))
     assert config.workers == 1
     assert config.model == cli.DEFAULT_MODEL
     assert config.budget == cli.DEFAULT_BUDGET

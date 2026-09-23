@@ -2,7 +2,7 @@
 
 One bridged Claude Code agent, in a sandbox carrying the Android offensive toolchain, handed a
 **broker-granted device**, reaching it over adb from inside the sandbox, working the target APK
-its device yaml selects (`-T spec=devices/<name>.yaml` → `TargetConfig`; apk-agnostic). It is
+its eval config selects (`-T spec=configs/evals/<name>.yaml` → `TargetConfig`; apk-agnostic). It is
 spawned 1× by `single_agent.py` and N× by `conductor.py`/`swarm.py`.
 
 Separate-runs swarm model: one agent = one bridge = one clean transcript (no subagent
@@ -47,8 +47,8 @@ from swarm_eval.model_filters import sweep_generate_filter
 from swarm_eval.target import TargetConfig, load_target
 
 
-# The harness is APK-agnostic (CLAUDE.md): a run's target is defined ENTIRELY by its device yaml
-# (`-T spec=devices/<name>.yaml`), read into a `TargetConfig` by `load_target` — which APK(s) to
+# The harness is APK-agnostic (CLAUDE.md): a run's target is defined ENTIRELY by its eval config
+# (`-T spec=configs/evals/<name>.yaml`), read into a `TargetConfig` by `load_target` — which APK(s) to
 # stage, which device spec the broker acquires, and the app/mission slots. No app or APK path is
 # hardcoded here anymore (apk-agnostic refactor, ticket 02).
 
@@ -210,7 +210,7 @@ def build_dynamic_task(target: TargetConfig, *, time_limit: int = DEFAULT_TIME_L
 
 @task
 def dynamic_agent(spec: str = DEFAULT_SPEC, time_limit: int = DEFAULT_TIME_LIMIT):
-    """The dynamic-agent `@task`: select the target purely from its device yaml
-    (`-T spec=devices/<name>.yaml`, default the RASP toy) and build the run. rasp, healthhub, and
+    """The dynamic-agent `@task`: select the target purely from its eval config
+    (`-T spec=configs/evals/<name>.yaml`, default the RASP toy) and build the run. rasp, healthhub, and
     any future APK run through this one code path — the only difference is the yaml."""
     return build_dynamic_task(load_target(spec), time_limit=time_limit)

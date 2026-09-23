@@ -9,7 +9,7 @@
 # Teardown must work even if the system image was since uninstalled, so it reads only the
 # AVD name from the spec — it does NOT run full spec validation.
 #
-#   bin/env-down --spec devices/pixel-a37.yaml [--port 5554] [--keep-avd]
+#   bin/env-down --spec configs/devices/rasp_dummy.yaml [--port 5554] [--keep-avd]
 #   bin/env-down --name pixel-a37 [--port 5554] [--keep-avd]
 set -uo pipefail
 

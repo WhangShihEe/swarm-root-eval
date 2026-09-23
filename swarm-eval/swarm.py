@@ -6,13 +6,13 @@ host-side arbiter over the board, posts the `done` verdict, and collates everyth
 `logs/<swarm-id>/`. A broker must be up first (`bin/broker start`).
 
     # single agent = the swarm at N=1 (uniform path, not special-cased)
-    python swarm.py devices/rasp_dummy.yaml --workers 1
+    python swarm.py configs/evals/rasp_dummy.yaml --workers 1
 
     # a 3-agent swarm on HealthHub, 20-min per-run cap, 45-min swarm budget
-    python swarm.py devices/healthhub.yaml --workers 3 --time-limit 1200 --budget 2700 \
+    python swarm.py configs/evals/healthhub.yaml --workers 3 --time-limit 1200 --budget 2700 \
         --model anthropic/claude-sonnet-4-5-20250929
 
-The target is selected ENTIRELY by the device yaml (apk-agnostic): the required positional is the
+The target is selected ENTIRELY by the eval config (apk-agnostic): the required positional is the
 same yaml the broker acquires and the workers attack (`-T spec=`). The `--model` flag is the
 model-sweep lever (spec S2): the sandbox's keyless CC proxies to it.
 """
@@ -56,9 +56,9 @@ def _pick(cli, cfg, default):
 def build_config(args: argparse.Namespace) -> SwarmConfig:
     """Map parsed args + the eval config's run knobs → `SwarmConfig`, resolving CLI > config >
     built-in default per knob (ticket 03): `--workers`/`--model`/limits/budget/cap left unset are
-    `None` here (see `parse_args`), so the eval config's value stands; a legacy device yaml yields
-    an empty `RunConfig`, so the built-in defaults apply (no regression). `--board-dir`/`--log-dir`
-    are only forwarded when given, so the config's under-`swarm-eval/` defaults stand otherwise."""
+    `None` here (see `parse_args`), so the eval config's value stands; a knob the eval config omits
+    is left unset, so the built-in defaults apply (no regression). `--board-dir`/`--log-dir` are
+    only forwarded when given, so the config's under-`swarm-eval/` defaults stand otherwise."""
     run = load_run_config(args.spec)
     kwargs: dict = dict(
         workers=_pick(args.workers, run.worker_count, DEFAULT_WORKERS),
@@ -82,7 +82,7 @@ def build_config(args: argparse.Namespace) -> SwarmConfig:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="swarm", description="Launch one swarm run (ticket 05b).")
-    p.add_argument("spec", help="eval config or device yaml selecting the target/run, e.g. "
+    p.add_argument("spec", help="eval config selecting the target/run, e.g. "
                                 "configs/evals/rasp_dummy.yaml")
     # Run-knob flags default to None (not the built-in default) so an unset flag is distinguishable
     # from one passed with the default value — `build_config` then applies CLI > config > default.

@@ -119,7 +119,7 @@ def test_task_swarm_mode_honours_spec_selected_target(monkeypatch, tmp_path):
     monkeypatch.setenv(ENV_AGENT_ID, "worker-1")
     monkeypatch.setenv(ENV_WORKER_IDS, "worker-1")
 
-    t = da.dynamic_agent(spec="devices/healthhub.yaml")
+    t = da.dynamic_agent(spec="configs/evals/healthhub.yaml")
     prompt = t.dataset[0].input
     assert "HealthHub" in prompt and "RASP Target" not in prompt
     assert "Collaboration protocol" in prompt  # still wrapped for the swarm

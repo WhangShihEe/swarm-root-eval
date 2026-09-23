@@ -6,9 +6,13 @@ run either **solo** or as a **swarm** coordinating over a shared messageboard. E
 (ADR-0002). The device layer this stands on is [`../bin/`](../bin/README.md) — a broker must be up
 first (`bin/broker start`).
 
-The target is selected **entirely by a device YAML** (`-T spec=devices/<name>.yaml`): the same
-YAML is the broker's acquire spec and the agent's target selector. The harness is APK-agnostic —
-rasp, healthhub, and any future APK run through one code path; only the YAML differs.
+The target is selected **entirely by an eval-config YAML** (`-T spec=configs/evals/<name>.yaml`):
+one file that references the app, the device, and the worker roster (under `../configs/`) and
+carries the run knobs. The launcher resolves it to the broker's acquire spec (the provisioning
+device + the app's APK) and passes the eval config itself as the agent's target selector. The
+harness is APK-agnostic — rasp, healthhub, and any future APK run through one code path; only the
+config differs. (See [the config model](../README.md#running-custom-evals-yaml) for the
+`configs/{evals,apps,devices,workers}/` split and the CLI-override rule.)
 
 ## Entrypoints — single vs. swarm
 
@@ -18,8 +22,8 @@ Android offensive toolchain), is spawned by two launchers:
 ### `single_agent.py` — one device, one agent, no board
 
 ```bash
-python single_agent.py devices/rasp_dummy.yaml
-python single_agent.py devices/healthhub.yaml \
+python single_agent.py configs/evals/rasp_dummy.yaml
+python single_agent.py configs/evals/healthhub.yaml \
     --model anthropic/claude-sonnet-4-5-20250929 --time-limit 1200 --message-limit 60
 ```
 
@@ -32,8 +36,8 @@ board tools.
 ### `swarm.py` — N agents + a shared board (the Conductor)
 
 ```bash
-python swarm.py devices/rasp_dummy.yaml --workers 1          # N=1 = the single-agent case
-python swarm.py devices/healthhub.yaml --workers 3 --time-limit 1200 --budget 2700 \
+python swarm.py configs/evals/rasp_dummy.yaml --workers 1          # N=1 = the single-agent case
+python swarm.py configs/evals/healthhub.yaml --workers 3 --time-limit 1200 --budget 2700 \
     --model anthropic/claude-sonnet-4-5-20250929
 ```
 

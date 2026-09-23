@@ -1,0 +1,20 @@
+# Device-spec: provisioning-only (yaml-config ticket 02/04). Describes ONLY the emulator to boot —
+# no app, no APK. The APK is owned by configs/apps/dbs.yaml and handed to the device layer
+# explicitly by the launcher (--target-apk); the bash bring-up layer (bin/_spec.sh,
+# bin/_provision.sh) reads only the top-level provisioning scalars below. Same emulator/image as
+# every other probe device.
+#   referenced by configs/evals/dbs.yaml (device: dbs)
+
+name: dbs                   # AVD name + adb tag (its own AVD)
+device_profile: pixel           # avdmanager -d <profile>
+system_image: "system-images;android-35;google_apis;arm64-v8a"
+api: "35"                       # env-up asserts config.ini target == android-35
+
+ram_mb: 4096                    # hw.ramSize
+cores: 4                        # hw.cpu.ncore
+data_size_mb: 8192              # disk.dataPartition.size
+
+provision: true
+frida: true
+normalize_settings: true
+headless: true                  # false -> boot with a visible window (or run env-up --window)

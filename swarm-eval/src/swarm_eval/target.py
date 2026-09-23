@@ -1,21 +1,18 @@
 """Python-side reader for a run's config — the one place a yaml becomes a typed `TargetConfig`.
 
-A run is selected by a single positional path handed to both consumers (`bin/broker acquire`
-host-side and the `-T spec=` in-task). That path is one of two shapes, and `load_target` reads
-either into the same `TargetConfig`:
+A run is selected by a single positional path — an **eval config**
+(`configs/evals/<name>.yaml`) — handed unchanged to both consumers (`bin/broker acquire`
+host-side and the `-T spec=` in-task). The eval config *references* an app, a device, and a
+worker role by name: the app file (`configs/apps/<name>.yaml`) owns `target_apk` + the app/mission
+slots; the device file (`configs/devices/<name>.yaml`) is provisioning-only. `load_target` reads
+it into a `TargetConfig` carrying what BOTH consumers need — the staged APK file-set + mission
+slots for the in-task agent, and `device_spec`/`broker_apk` for the host-side broker (which device
+to acquire, which APK to install).
 
-- an **eval config** (`configs/evals/<name>.yaml`, yaml-config ticket 02) — a file that
-  *references* an app, a device, and a worker role by name. The app file
-  (`configs/apps/<name>.yaml`) owns `target_apk` + the app/mission slots; the device file
-  (`configs/devices/<name>.yaml`) is provisioning-only. This is the new shape.
-- a **legacy combined device yaml** (`devices/<name>.yaml`) — provisioning scalars at the top
-  level plus a nested `app:` block and a top-level `target_apk`. The pre-split shape, kept
-  working for the not-yet-migrated targets (ticket 04 retires it).
-
-The discriminator is a top-level `device:` key: an eval config has one (it references a device),
-a legacy device yaml never does. `TargetConfig` carries what BOTH consumers need — the staged
-APK file-set + mission slots for the in-task agent, and `device_spec`/`broker_apk` for the
-host-side broker (which device to acquire, which APK to install).
+An eval config is discriminated by its top-level `device:` key (it references a device); a config
+without one is rejected. The pre-split "combined device yaml" shape (provisioning scalars + a
+nested `app:` block in one `devices/<name>.yaml`) was retired in yaml-config ticket 04 — every
+target now runs from an eval config.
 """
 
 from __future__ import annotations
@@ -35,14 +32,12 @@ STAGE_DIR = "/root"
 # The configs/ tree an eval config resolves its bare-name references under (ticket 02).
 CONFIGS_DIR = "configs"
 
-# Shared mission prompts. An app/device yaml may set `prompt: <name>` instead of inlining the
-# three mission slots; the slots are then read from `<prompts_dir>/<name>.yaml`, so one flow is
-# authored once and reused across many targets. The new (app-owned) shape reads from
-# `configs/apps/prompts`; the legacy combined yamls read from `devices/prompts` until ticket 04
-# migrates them. Any inline slot overrides the shared file field-by-field, and an inline
-# `<slot>_append` concatenates onto that slot (see `_mission_fields.slot`).
+# Shared mission prompts. An app file may set `prompt: <name>` instead of inlining the three
+# mission slots; the slots are then read from `configs/apps/prompts/<name>.yaml`, so one flow is
+# authored once and reused across many app files. Any inline slot overrides the shared file
+# field-by-field, and an inline `<slot>_append` concatenates onto that slot (see
+# `_mission_fields.slot`).
 APP_PROMPTS_DIR = "configs/apps/prompts"
-LEGACY_PROMPTS_DIR = "devices/prompts"
 PROMPT_FIELDS = ("objective", "success_signal", "details")
 
 # The default worker count when an eval config names a role without a `count:` (or names it by a
@@ -60,15 +55,13 @@ class TargetConfig:
     - `files` — the staged APK file-set: `{/root/<basename>: <abs host path>}`, the primary APK
       plus its `split_config.*` siblings, ready to hand to a Sample's `files`.
     - `apk_name` — the primary APK basename the mission decompiles (`base.apk`, `rasp_dummy.apk`).
-    - the app/mission slots (`package`…`details`) come from the app fields (an app file, or the
-      legacy yaml's nested `app:` block).
+    - the app/mission slots (`package`…`details`) come from the referenced app file's fields.
 
     Host-side fields (broker):
     - `spec_path` — the repo-relative form of the positional given (kept for the transcript).
     - `device_spec` — the repo-relative device yaml the broker acquires (`bin/broker acquire
-      --spec <device_spec>`, cwd = repo root). For a legacy yaml this is the positional itself.
-    - `broker_apk` — the repo-relative APK path to install via `--target-apk`, or `None` to let
-      the device layer source it from the device spec (the legacy path, unchanged).
+      --spec <device_spec>`, cwd = repo root), resolved from the eval config's `device:` reference.
+    - `broker_apk` — the repo-relative APK path to install via `--target-apk` (the app file owns it).
     """
 
     spec_path: str
@@ -84,14 +77,12 @@ class TargetConfig:
     details: str | None = None
     # yaml-config ticket 03 — the 3-source mission prompt: the worker role file's notes and the
     # device file's notes, concatenated by `mission.build_mission` in the order (worker role → app
-    # → device). `None` for the legacy combined yaml (no worker/device notes there) and whenever a
-    # file omits `notes`, so the legacy mission renders unchanged.
+    # → device). `None` whenever a file omits `notes`, so that source is simply skipped.
     worker_notes: str | None = None
     device_notes: str | None = None
     # yaml-config ticket 03 — the device-setting override whitelist. An eval config may override
     # ONLY these two device scalars; both `None` means "no eval override" (env-up reads the value
-    # from the device spec, else its built-in default — precedence eval > device > default). Legacy
-    # yamls never set them (their own spec scalars are read by env-up directly, as before).
+    # from the device spec, else its built-in default — precedence eval > device > default).
     writable_system: bool | None = None
     headless: bool | None = None
 
@@ -154,13 +145,12 @@ def _load_prompt(root: Path, prompts_dir: str, name: str) -> dict[str, Any]:
     return {k: loaded[k] for k in PROMPT_FIELDS if k in loaded}
 
 
-def _mission_fields(root: Path, app: dict[str, Any], prompts_dir: str) -> dict[str, Any]:
-    """Resolve the app/mission slots from an app dict (an app file's top level, or a legacy
-    yaml's nested `app:` block). A `prompt:` pulls the slots from a shared
-    `<prompts_dir>/<name>.yaml`; an inline `<slot>` overrides the shared file slot-by-slot (inline
-    wins, else shared, else ""), and an inline `<slot>_append` concatenates extra per-app text
-    onto whichever base won."""
-    shared = _load_prompt(root, prompts_dir, app["prompt"]) if app.get("prompt") else {}
+def _mission_fields(root: Path, app: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the app/mission slots from an app file's top-level dict. A `prompt:` pulls the
+    slots from a shared `configs/apps/prompts/<name>.yaml`; an inline `<slot>` overrides the shared
+    file slot-by-slot (inline wins, else shared, else ""), and an inline `<slot>_append`
+    concatenates extra per-app text onto whichever base won."""
+    shared = _load_prompt(root, APP_PROMPTS_DIR, app["prompt"]) if app.get("prompt") else {}
 
     def slot(key: str) -> Any:
         # inline `<key>` fully overrides the shared file; else the shared slot; else "".
@@ -259,15 +249,13 @@ def _target_from_app(
     broker_apk: str | None,
     target_apk: str,
     app: dict[str, Any],
-    prompts_dir: str,
     worker_notes: str | None = None,
     device_notes: str | None = None,
     writable_system: bool | None = None,
     headless: bool | None = None,
 ) -> TargetConfig:
-    """Assemble a `TargetConfig` from a resolved app dict + APK path, shared by both shapes. The
-    3-source mission notes (worker role, device) and the device-override whitelist ride through as
-    keyword args — only the eval-config path sets them; the legacy path leaves them `None`."""
+    """Assemble a `TargetConfig` from a resolved app dict + APK path. The 3-source mission notes
+    (worker role, device) and the device-override whitelist ride through as keyword args."""
     apk_p = Path(target_apk)
     primary_abs = (apk_p if apk_p.is_absolute() else root / apk_p).resolve()
     return TargetConfig(
@@ -280,7 +268,7 @@ def _target_from_app(
         device_notes=device_notes,
         writable_system=writable_system,
         headless=headless,
-        **_mission_fields(root, app, prompts_dir),
+        **_mission_fields(root, app),
     )
 
 
@@ -323,7 +311,6 @@ def _load_eval_config(root: Path, spec_path: str, data: dict[str, Any]) -> Targe
         broker_apk=str(target_apk),
         target_apk=str(target_apk),
         app=app,
-        prompts_dir=APP_PROMPTS_DIR,
         # The 3-source mission notes: worker role (first role) → app (`details`, via _mission_fields)
         # → device. And the device-override whitelist: only `writable_system`/`headless` are read
         # off the eval config top level; any other device scalar there is ignored (not overridable).
@@ -334,43 +321,34 @@ def _load_eval_config(root: Path, spec_path: str, data: dict[str, Any]) -> Targe
     )
 
 
-def _load_device_yaml(root: Path, spec_path: str, data: dict[str, Any]) -> TargetConfig:
-    """The legacy combined shape: provisioning scalars + a top-level `target_apk` + a nested
-    `app:` block. The broker acquires this same file and sources the APK from it (`broker_apk`
-    stays None), exactly as before the split — no regression for the not-yet-migrated targets."""
-    target_apk = data.get("target_apk")
-    if not target_apk:
-        raise ValueError(f"{spec_path}: device spec has no 'target_apk'")
-    return _target_from_app(
-        root=root,
-        spec_path=spec_path,
-        device_spec=spec_path,
-        broker_apk=None,  # the device layer reads target_apk out of this same spec (legacy)
-        target_apk=str(target_apk),
-        app=data.get("app") or {},
-        prompts_dir=LEGACY_PROMPTS_DIR,
-    )
+def _read_eval_config(spec: str | Path) -> tuple[Path, str, dict[str, Any]]:
+    """Read a positional eval config into `(repo_root, repo-relative spec path, parsed data)` —
+    the shared front half of `load_target` and `load_run_config`.
 
-
-def load_target(spec: str | Path) -> TargetConfig:
-    """Read one positional config — an eval config or a legacy device yaml — into a `TargetConfig`.
-
-    `spec` may be repo-relative (`configs/evals/rasp_dummy.yaml`, `devices/healthhub.yaml`) or
-    absolute; a relative path (and any relative reference/`target_apk` inside) resolves against
-    the repo root, so a config loads the same whether cwd is the repo root or `swarm-eval/` — the
-    same resolution the broker/bash layer uses. A top-level `device:` key selects the eval-config
-    reader; its absence selects the legacy reader.
-    """
+    `spec` may be repo-relative (`configs/evals/rasp_dummy.yaml`) or absolute; a relative path
+    (and any relative reference/`target_apk` inside) resolves against the repo root, so a config
+    loads the same whether cwd is the repo root or `swarm-eval/` — the same resolution the
+    broker/bash layer uses. The config MUST carry a top-level `device:` reference (the eval-config
+    shape); a config without one — e.g. the retired combined device yaml — is rejected here, so
+    both readers reject it identically."""
     root = repo_root().resolve()
-
     spec_p = Path(spec)
     abs_spec = (spec_p if spec_p.is_absolute() else root / spec_p).resolve()
     data: dict[str, Any] = yaml.safe_load(abs_spec.read_text(encoding="utf-8")) or {}
     spec_path = _repo_rel(root, abs_spec, str(spec))
+    if "device" not in data:
+        raise ValueError(
+            f"{spec_path}: not an eval config (no top-level `device:` reference). Every target "
+            "runs from configs/evals/<name>.yaml; the combined device-yaml shape was retired in "
+            "yaml-config ticket 04."
+        )
+    return root, spec_path, data
 
-    if "device" in data:
-        return _load_eval_config(root, spec_path, data)
-    return _load_device_yaml(root, spec_path, data)
+
+def load_target(spec: str | Path) -> TargetConfig:
+    """Read one positional eval config (`configs/evals/<name>.yaml`) into a `TargetConfig`."""
+    root, spec_path, data = _read_eval_config(spec)
+    return _load_eval_config(root, spec_path, data)
 
 
 # ---- yaml-config ticket 03: run knobs folded into the eval config --------------------------
@@ -378,9 +356,8 @@ def load_target(spec: str | Path) -> TargetConfig:
 # An eval config carries the run's DEFAULTS (model, worker roster, caps/budget/limits) so a run is
 # fully replicable from the file alone; a CLI flag still OVERRIDES the config value for that run
 # (the launchers apply CLI > config > built-in default). These knobs are read separately from the
-# target/device concern (`load_target`): they steer scheduling, not the APK/mission. A legacy
-# combined device yaml carries none of them, so `load_run_config` returns an all-unset `RunConfig`
-# for it and the launchers fall back to their built-in defaults (no regression).
+# target/device concern (`load_target`): they steer scheduling, not the APK/mission. A knob the
+# config omits is left unset on `RunConfig`, so the launcher's built-in default stands.
 
 
 @dataclass(frozen=True)
@@ -425,17 +402,12 @@ def _parse_workers(workers_ref: Any) -> tuple[WorkerRequest, ...]:
 
 
 def load_run_config(spec: str | Path) -> RunConfig:
-    """Read the run knobs from a positional config. An eval config (top-level `device:` key) may
-    set `model`, a `workers: [{role, count}]` roster, and a `limits:` block
-    (`time_limit`/`working_limit`/`message_limit`/`budget`/`cap`); each is optional. A legacy
-    combined device yaml sets none of these, so an empty `RunConfig` is returned and the launcher's
-    built-in defaults stand — no behaviour change for the not-yet-migrated targets."""
-    root = repo_root().resolve()
-    spec_p = Path(spec)
-    abs_spec = (spec_p if spec_p.is_absolute() else root / spec_p).resolve()
-    data: dict[str, Any] = yaml.safe_load(abs_spec.read_text(encoding="utf-8")) or {}
-    if "device" not in data:
-        return RunConfig()
+    """Read the run knobs from a positional eval config. It may set `model`, a
+    `workers: [{role, count}]` roster, and a `limits:` block
+    (`time_limit`/`working_limit`/`message_limit`/`budget`/`cap`); each is optional, and an
+    omitted knob is left unset so the launcher's built-in default stands. A config with no
+    top-level `device:` reference is rejected (via the shared `_read_eval_config`)."""
+    _, _, data = _read_eval_config(spec)
 
     limits = data.get("limits") or {}
 

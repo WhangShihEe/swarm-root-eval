@@ -8,7 +8,7 @@
 # port (--port, default 5554) or --serial.
 #
 #   bin/verify --serial emulator-5554 --package sg.gov.hpb.healthhub
-#   bin/verify --spec devices/pixel-a37.yaml --apk ~/apks/healthhub
+#   bin/verify --spec configs/devices/rasp_dummy.yaml --apk ~/apks/healthhub
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

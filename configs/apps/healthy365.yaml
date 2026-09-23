@@ -1,0 +1,17 @@
+# App-spec (yaml-config ticket 04): Healthy 365 — a cold RASP probe target. This file OWNS the APK
+# path and the app/mission slots the Python harness reads (swarm_eval/target.py::load_target);
+# the device it runs on is a separate provisioning-only file (configs/devices/healthy365.yaml). The
+# mission flow comes from the shared prompt (prompt: get-running-disable-rasp), resolved under
+# configs/apps/prompts/. There is no `frida_mode` key: attach-vs-spawn is the agent's
+# per-`frida-run` choice.
+#   referenced by configs/evals/healthy365.yaml (app: healthy365)
+
+# The APK lives in the untracked in-project corpus (apks/, gitignored); env-up auto-detects any
+# split_config.* siblings. Path is repo-relative; the launcher hands it to the device layer
+# explicitly (--target-apk) and the Python harness resolves it against the repo root.
+target_apk: "apks/healthy365/base.apk"
+
+package: sg.gov.hpb.healthy365
+label: "Healthy 365"
+# launch_activity omitted — the agent discovers it from the manifest.
+prompt: get-running-disable-rasp   # shared mission slots (objective/success_signal/details)

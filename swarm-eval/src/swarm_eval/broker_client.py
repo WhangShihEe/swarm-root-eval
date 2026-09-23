@@ -28,8 +28,13 @@ ADB_HOST = "host.docker.internal"
 # is pinned to this; a client/server mismatch is a classic silent failure.
 FRIDA_VERSION = "17.17.0"
 
-# Default device-spec — the RASP dummy target (owned graded RASP/anti-tamper app).
-DEFAULT_SPEC = "devices/rasp_dummy.yaml"
+# Default eval config — the RASP dummy target (owned graded RASP/anti-tamper app). This is the
+# run/target selector the launchers + `dynamic_agent` default to (`-T spec=`, `load_target`).
+DEFAULT_SPEC = "configs/evals/rasp_dummy.yaml"
+
+# Default provisioning DEVICE spec `acquire` leases when no device is named. The launchers always
+# pass the eval config's resolved `device_spec` explicitly; this default only backs a bare call.
+DEFAULT_DEVICE_SPEC = "configs/devices/rasp_dummy.yaml"
 
 
 class BrokerError(RuntimeError):
@@ -145,7 +150,7 @@ def _run_broker(args: list[str], timeout: int = 900) -> subprocess.CompletedProc
     )
 
 
-def acquire(spec: str = DEFAULT_SPEC, *extra: str, timeout: int = 900) -> Contract:
+def acquire(spec: str = DEFAULT_DEVICE_SPEC, *extra: str, timeout: int = 900) -> Contract:
     """Acquire one device from the running broker and return its contract.
 
     `extra` forwards env-up args through the broker (e.g. a profile override). Raises

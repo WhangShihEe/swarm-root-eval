@@ -6,12 +6,12 @@
 # that reach the running broker over its file-backed queue under BROKER_DIR.
 #
 #   bin/broker start [--profile frida-only|writable-system] [--foreground]
-#   bin/broker acquire --spec devices/rootbeer.yaml [--target-apk <apk>] [env-up args…]
+#   bin/broker acquire --spec configs/devices/rasp_dummy.yaml [--target-apk <apk>] [env-up args…]
 #   bin/broker status
 #   bin/broker release (--serial emulator-5554 | --port 5554)
 #   bin/broker ping
 #   bin/broker stop
-#   bin/broker demo    --spec devices/rootbeer.yaml   # start, grant 2, release both, stop
+#   bin/broker demo    --spec configs/devices/rasp_dummy.yaml   # start, grant 2, release both, stop
 #
 # A grant honors the spec's launch profile (writable-/system by default); `start --profile <p>`
 # is an optional override forced across every grant. On `acquire` the broker prints a connection

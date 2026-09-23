@@ -13,7 +13,10 @@ from swarm_eval.agent_runner import ENV_DEVICE_CONTRACT, ENV_INSPECT_LOG_DIR, Ru
 from swarm_eval.broker_client import Contract, parse_contract
 
 CONTRACT = Contract("emulator-5554", 5554, 5555, "writable-system")
-YAML = "devices/healthhub.yaml"
+YAML = "configs/evals/healthhub.yaml"
+# The device spec + APK the healthhub eval config resolves to (what the launcher hands the broker).
+YAML_DEVICE = "configs/devices/healthhub.yaml"
+YAML_APK = "apks/healthhub/base.apk"
 
 
 class FakeHandle:
@@ -25,14 +28,15 @@ class FakeHandle:
 
 
 class FakeBroker:
-    """Records the acquire spec and every released serial; hands out one fixed contract."""
+    """Records each acquire (device spec + any forwarded env-up args) and every released serial;
+    hands out one fixed contract."""
 
     def __init__(self):
-        self.acquired: list[str] = []
+        self.acquired: list[tuple] = []
         self.released: list[str] = []
 
-    def acquire(self, spec: str) -> Contract:
-        self.acquired.append(spec)
+    def acquire(self, spec: str, *extra: str) -> Contract:
+        self.acquired.append((spec, *extra))
         return CONTRACT
 
     def release(self, serial: str) -> None:
@@ -81,8 +85,9 @@ def test_run_single_leases_launches_then_releases(tmp_path):
     rc = cli.run_single(_config(tmp_path), acquire=broker.acquire, release=broker.release, runner=runner)
 
     assert rc == 0
-    # acquire → the target yaml is the broker spec; release → the leased serial, exactly once
-    assert broker.acquired == [YAML]
+    # acquire → the eval config's provisioning device spec + the app's APK via --target-apk;
+    # release → the leased serial, exactly once
+    assert broker.acquired == [(YAML_DEVICE, "--target-apk", YAML_APK)]
     assert broker.released == ["emulator-5554"]
     # the one launched run: `-T spec=<yaml>` selects the target, DEVICE_CONTRACT points at a
     # written, parseable contract file, and there is NO board env (single mode).
@@ -166,18 +171,6 @@ def test_run_single_from_eval_config_acquires_device_and_installs_apk(tmp_path):
     assert f"spec={EVAL_YAML}" in specs[0].argv
 
 
-def test_run_single_legacy_yaml_acquires_the_positional_with_no_target_apk(tmp_path):
-    # A legacy combined yaml: the broker acquires the SAME positional and sources the APK itself —
-    # no --target-apk forwarded (no regression for the not-yet-migrated targets).
-    broker = FakeApkBroker()
-    cli.run_single(
-        _config(tmp_path, spec=YAML),
-        acquire=broker.acquire, release=broker.release,
-        runner=lambda s: FakeHandle(0),
-    )
-    assert broker.acquired == [(YAML,)]
-
-
 # ---- yaml-config ticket 03: run knobs from the eval config + CLI override -------------------
 
 def test_build_config_takes_run_knobs_from_the_eval_config():
@@ -194,11 +187,13 @@ def test_cli_flags_override_the_eval_config_values():
     assert cfg.time_limit == 600           # CLI overrides the config's time_limit
 
 
-def test_legacy_yaml_falls_back_to_built_in_defaults():
-    # A legacy device yaml carries no run knobs → the launcher's built-in defaults stand.
+def test_eval_config_without_run_knobs_falls_back_to_built_in_defaults(tmp_path):
+    # An eval config that sets no run knobs → the launcher's built-in defaults stand.
     from swarm_eval.agent_runner import DEFAULT_MODEL, DEFAULT_TIME_LIMIT
 
-    cfg = cli.build_config(cli.parse_args([YAML]))
+    ev = tmp_path / "bare.yaml"
+    ev.write_text("app: rasp_dummy\ndevice: rasp_dummy\nworkers: dynamic\n", encoding="utf-8")
+    cfg = cli.build_config(cli.parse_args([str(ev)]))
     assert cfg.model == DEFAULT_MODEL
     assert cfg.time_limit == DEFAULT_TIME_LIMIT
 

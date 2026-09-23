@@ -1,0 +1,33 @@
+# Eval config (yaml-config ticket 02+04): the single file that fully specifies one replicable run
+# by reference. It points at the app under test, the device to provision it on, and the worker
+# roster — each a bare name resolved under configs/{apps,devices,workers}/<name>.yaml — and it
+# carries the RUN KNOBS as defaults (model, worker count, caps/budget/limits). Any CLI flag
+# OVERRIDES the matching config value for that run (CLI > config > built-in default), so --model
+# and --workers still drive the model sweep and swarm sizing without editing this file:
+#   python single_agent.py configs/evals/sgsecure.yaml
+#   python swarm.py        configs/evals/sgsecure.yaml --workers 3
+
+app: sgsecure            # -> configs/apps/sgsecure.yaml  (owns target_apk + the mission slots)
+device: sgsecure         # -> configs/devices/sgsecure.yaml  (provisioning only)
+
+# The worker roster: a list of {role, count}. Each role names configs/workers/<role>.yaml (the
+# role file's `notes` open the worker's mission — the 3-source prompt: role -> app -> device).
+# The total worker count is the sum of the counts; --workers overrides it for a run.
+workers:
+  - role: dynamic       # -> configs/workers/dynamic.yaml
+    count: 1
+
+# The served provider model the sandboxed Claude Code proxies to (the sweep lever). --model wins.
+model: anthropic/claude-sonnet-4-5-20250929
+
+# Caps / budget / limits (all optional; each overridable by the matching CLI flag).
+limits:
+  time_limit: 1800      # per-run Inspect --time-limit (s)
+  budget: 3600          # swarm launcher hard wall-clock (s)
+  cap: 6                # max workers before fail-fast
+
+# Device-setting override whitelist: an eval config may override ONLY writable_system and headless
+# (precedence eval > device > built-in default). Left unset, so this run uses the device file's
+# values.
+#   writable_system: true
+#   headless: true

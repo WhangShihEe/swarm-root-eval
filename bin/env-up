@@ -15,10 +15,10 @@
 # the spec's app (the pool/broker provisioning path) resolves the spec's target_apk itself
 # (spec_target_apk) and passes it here. Teardown is bin/env-down.
 #
-#   bin/env-up --spec devices/pixel-a37.yaml [--port 5554] [--apk <apk|dir>]
-#   bin/env-up --spec devices/pixel-a37.yaml                 # bare boot (no app installed)
-#   TARGET_APK=<apk> bin/env-up --spec devices/pixel-a37.yaml
-#   bin/env-up --spec devices/rootbeer.yaml --window   # watch a real emulator on screen
+#   bin/env-up --spec configs/devices/rasp_dummy.yaml [--port 5554] [--apk <apk|dir>]
+#   bin/env-up --spec configs/devices/rasp_dummy.yaml                 # bare boot (no app installed)
+#   TARGET_APK=<apk> bin/env-up --spec configs/devices/rasp_dummy.yaml
+#   bin/env-up --spec configs/devices/rasp_dummy.yaml --window   # watch a real emulator on screen
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

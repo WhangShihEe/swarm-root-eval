@@ -136,7 +136,9 @@ class FakeBroker:
         self.fail_on = fail_on
         self.released: list[str] = []
 
-    def acquire(self, spec: str) -> Contract:
+    def acquire(self, spec: str, *extra: str) -> Contract:
+        # `extra` is the forwarded env-up args (e.g. --target-apk) — the eval-config default now
+        # splits the APK out of the device spec, so acquire receives them; ignored here.
         self.n += 1
         if self.fail_on is not None and self.n == self.fail_on:
             raise BrokerError(f"acquire #{self.n} boom")
@@ -281,11 +283,11 @@ def test_build_run_argv_defaults_carry_a_time_limit(tmp_path):
 def test_build_run_argv_selects_target_via_spec(tmp_path):
     # apk-agnostic refactor (ticket 02): the worker's target is the device yaml, passed as
     # `-T spec=<yaml>` so the spawned dynamic_agent stages the right APK(s) + mission.
-    argv = build_run_argv(config=cfg(tmp_path, spec="devices/healthhub.yaml"), task="dynamic_agent.py")
-    assert "-T" in argv and "spec=devices/healthhub.yaml" in argv
+    argv = build_run_argv(config=cfg(tmp_path, spec="configs/evals/healthhub.yaml"), task="dynamic_agent.py")
+    assert "-T" in argv and "spec=configs/evals/healthhub.yaml" in argv
     # -T spec=... rides right after the task, before --model
     i = argv.index("-T")
-    assert argv[i - 1] == "dynamic_agent.py" and argv[i + 1] == "spec=devices/healthhub.yaml"
+    assert argv[i - 1] == "dynamic_agent.py" and argv[i + 1] == "spec=configs/evals/healthhub.yaml"
 
 
 def test_build_run_argv_carries_display_conversation(tmp_path):

@@ -17,8 +17,8 @@ from swarm_eval.mission import (
 from swarm_eval.target import load_target
 
 CONTRACT = "/root/device-contract.env"
-RASP = load_target("devices/rasp_dummy.yaml")        # single APK
-HEALTHHUB = load_target("devices/healthhub.yaml")    # split set
+RASP = load_target("configs/evals/rasp_dummy.yaml")        # single APK
+HEALTHHUB = load_target("configs/evals/healthhub.yaml")    # split set
 
 
 def test_build_mission_fills_app_slots_from_target():
@@ -90,20 +90,14 @@ def test_extract_self_report_absent_is_none():
     assert extract_self_report("no verdict here") is None
 
 
-def test_eval_config_mission_carries_legacy_app_slots_plus_worker_notes():
-    # yaml-config ticket 03: the eval-config mission is the legacy mission's app content PLUS the
-    # worker role file's notes (the 3-source prompt now opens with the role instructions). It is no
-    # longer byte-equal to the legacy render (which had no worker file) — it is a superset: the same
-    # app slots (objective / success_signal / details) survive, and the role notes now precede them.
-    ev = build_mission(load_target("configs/evals/rasp_dummy.yaml"), contract_path=CONTRACT)
-    legacy = build_mission(RASP, contract_path=CONTRACT)
-    assert ev != legacy
-    # the app content is unchanged by the split (objective, success bar, and the app detail prose)
-    assert RASP.objective in ev
-    assert RASP.success_signal in ev
+def test_eval_config_mission_folds_in_worker_role_notes():
+    # yaml-config ticket 03: the eval-config mission opens the 3-source prompt with the worker
+    # role file's notes, ahead of the app detail (source order: role → app). The rasp eval config
+    # references the `dynamic` role, so its notes land in the mission before the app's `details`.
+    ev = build_mission(RASP, contract_path=CONTRACT)
+    assert RASP.objective in ev and RASP.success_signal in ev
     assert RASP.details is not None and RASP.details in ev
-    # the dynamic role file's notes are folded in, ahead of the app detail (source order: role → app)
-    role_notes = load_target("configs/evals/rasp_dummy.yaml").worker_notes
+    role_notes = RASP.worker_notes
     assert role_notes and "dynamic-analysis agent" in role_notes
     assert role_notes in ev
     assert ev.index(role_notes) < ev.index(RASP.details)

@@ -1,0 +1,32 @@
+# Eval config (yaml-config ticket 03): the rasp_dummy target pinned to Bedrock Claude Opus 4.8,
+# served through the LiteLLM proxy (openai-api/litellm/…). Same app + device + worker roster as
+# configs/evals/rasp_dummy.yaml — this one only swaps the model to one this environment can
+# authenticate (it has LITELLM_API_KEY/LITELLM_BASE_URL in swarm-eval/.env, no ANTHROPIC_API_KEY).
+# A CLI --model/--workers still overrides these defaults for a run (CLI > config > built-in default).
+#   python single_agent.py configs/evals/rasp_dummy_opus48.yaml
+#   python swarm.py        configs/evals/rasp_dummy_opus48.yaml               # 1 worker (below)
+#   python swarm.py        configs/evals/rasp_dummy_opus48.yaml --workers 3   # CLI overrides count
+
+app: rasp_dummy         # -> configs/apps/rasp_dummy.yaml  (owns target_apk + the mission slots)
+device: rasp_dummy      # -> configs/devices/rasp_dummy.yaml  (provisioning only)
+
+# The worker roster: {role, count}. The role names configs/workers/<role>.yaml, whose `notes` open
+# the worker's mission (3-source prompt: role -> app -> device). Total workers = sum of counts.
+workers:
+  - role: dynamic       # -> configs/workers/dynamic.yaml
+    count: 1
+
+# Bedrock Claude Opus 4.8 via the LiteLLM proxy. openai-api/<name>/<model> maps <name> -> the
+# <NAME>_API_KEY / <NAME>_BASE_URL env vars, so `litellm` here uses LITELLM_API_KEY/LITELLM_BASE_URL.
+model: openai-api/litellm/bedrock-claude-opus-4.8
+
+# Caps / budget / limits (all optional; each overridable by the matching CLI flag).
+limits:
+  time_limit: 1800      # per-run Inspect --time-limit (s)
+  budget: 3600          # swarm launcher hard wall-clock (s)
+  cap: 6                # max workers before fail-fast
+
+# Device-setting override whitelist (only writable_system + headless; eval > device > default).
+# Left unset, so this run uses configs/devices/rasp_dummy.yaml's values.
+#   writable_system: true
+#   headless: true

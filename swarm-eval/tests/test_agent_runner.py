@@ -25,57 +25,57 @@ CONTRACT = Contract("emulator-5554", 5554, 5555, "writable-system")
 # ---- argv builder --------------------------------------------------------------------------
 
 def test_build_run_argv_selects_target_via_spec_before_model():
-    argv = build_run_argv(spec="devices/healthhub.yaml", model="anthropic/x")
+    argv = build_run_argv(spec="configs/evals/healthhub.yaml", model="anthropic/x")
     # `inspect eval <task> -T spec=<yaml> --model <model>`, spec right after the task
     assert argv[:3] == ["inspect", "eval", DEFAULT_WORKER_TASK]
     i = argv.index("-T")
-    assert argv[i + 1] == "spec=devices/healthhub.yaml"
+    assert argv[i + 1] == "spec=configs/evals/healthhub.yaml"
     assert argv[argv.index("--model") + 1] == "anthropic/x"
 
 
 def test_build_run_argv_omits_limits_by_default():
-    argv = build_run_argv(spec="devices/rasp_dummy.yaml")
+    argv = build_run_argv(spec="configs/evals/rasp_dummy.yaml")
     assert argv == [
         "inspect", "eval", DEFAULT_WORKER_TASK,
-        "-T", "spec=devices/rasp_dummy.yaml",
+        "-T", "spec=configs/evals/rasp_dummy.yaml",
         "--model", DEFAULT_MODEL,
     ]
     assert "--time-limit" not in argv and "--message-limit" not in argv
 
 
 def test_build_run_argv_includes_limits_when_set():
-    argv = build_run_argv(spec="devices/x.yaml", time_limit=1200, message_limit=40)
+    argv = build_run_argv(spec="configs/evals/x.yaml", time_limit=1200, message_limit=40)
     assert "--time-limit" in argv and "1200" in argv
     assert "--message-limit" in argv and "40" in argv
 
 
 def test_build_run_argv_honours_a_custom_task():
-    argv = build_run_argv(spec="devices/x.yaml", task="other_agent.py")
+    argv = build_run_argv(spec="configs/evals/x.yaml", task="other_agent.py")
     assert argv[2] == "other_agent.py"
 
 
 def test_build_run_argv_appends_display_when_set():
     # 05c: the conductor passes `--display conversation` so a worker streams an ANSI-free
     # transcript to its console file instead of a fullscreen TUI.
-    argv = build_run_argv(spec="devices/x.yaml", display="conversation")
+    argv = build_run_argv(spec="configs/evals/x.yaml", display="conversation")
     assert argv[argv.index("--display") + 1] == "conversation"
 
 
 def test_build_run_argv_omits_display_by_default():
-    assert "--display" not in build_run_argv(spec="devices/x.yaml")
+    assert "--display" not in build_run_argv(spec="configs/evals/x.yaml")
 
 
 def test_build_run_argv_disables_strict_tools_for_openai_api_models():
     # openai-api (LiteLLM proxy) models default to strict function-calling schemas, which Azure
     # OpenAI rejects for Claude Code's optional-property tools (e.g. Agent). Disable it so the
     # bridge's tools are accepted instead of 400ing into a silent retry stall.
-    argv = build_run_argv(spec="devices/x.yaml", model="openai-api/litellm/azure-gpt-5.6-sol")
+    argv = build_run_argv(spec="configs/evals/x.yaml", model="openai-api/litellm/azure-gpt-5.6-sol")
     assert argv[argv.index("-M") + 1] == "strict_tools=false"
 
 
 def test_build_run_argv_leaves_anthropic_models_untouched():
     # Bedrock/Anthropic ignore strict schemas, so the Claude sweep models need no -M override.
-    assert "-M" not in build_run_argv(spec="devices/x.yaml", model="anthropic/claude-sonnet-4-5")
+    assert "-M" not in build_run_argv(spec="configs/evals/x.yaml", model="anthropic/claude-sonnet-4-5")
 
 
 # ---- subprocess_runner: per-worker redirect + detachment (05c) ------------------------------

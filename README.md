@@ -57,51 +57,83 @@ bin/doctor                 # assert pinned tools + a rootable image; must exit 0
 bin/broker start           # bring the device layer up (grants rooted emulators on demand)
 
 # (optional smoke) grab a live rooted device by hand, then hand it straight back:
-bin/broker acquire --spec devices/rasp_dummy.yaml   # → serial=… adb_port=… profile=writable-system
+bin/broker acquire --spec configs/devices/rasp_dummy.yaml   # → serial=… adb_port=… profile=writable-system
 bin/broker release --serial emulator-5554
 
 # run one bridged Claude Code agent at the RASP-dummy target
 # (single_agent.py leases + releases its own device — even on failure/timeout):
 cd swarm-eval
-uv run python single_agent.py devices/rasp_dummy.yaml
+uv run python single_agent.py configs/evals/rasp_dummy.yaml
 ```
 
 The transcript + scored self-report land in `swarm-eval/logs/<run-id>/` (open with
 `uv run inspect view`). A single agent is just the swarm at **N=1**; the multi-agent form is:
 
 ```bash
-uv run python swarm.py devices/rasp_dummy.yaml --workers 3    # N workers + a shared board + arbiter
+uv run python swarm.py configs/evals/rasp_dummy.yaml --workers 3    # N workers + a shared board + arbiter
 ```
 
 ## Running custom evals (YAML)
 
-The target is defined **entirely by a device-spec YAML** ([`devices/*.yaml`](devices/)) — the harness
-never branches per app. Each spec is **two tiers**:
+A run is defined **entirely by one eval-config YAML** — [`configs/evals/<name>.yaml`](configs/evals/) —
+and the harness never branches per app. The config is split across the [`configs/`](configs/) tree
+by **concern**, and an eval config *references* the other three by bare name:
 
-- **Top-level scalars** — read by the **bash device layer** (`bin/_spec.sh`, `bin/_provision.sh`):
-  `name`, `device_profile`, `system_image`, `api`, `ram_mb`, `target_apk`, `provision`, `frida`, … .
-  These boot and provision the emulator to _t=0_.
-- **A nested `app:` block** — read _only_ by the **Python harness** (`swarm_eval/target.py`) and
-  ignored by bash: `package`, `label`, `launch_activity`, `frida_mode`, and the free-text
-  `objective` / `success_signal` / `details` that become the agent's mission.
+| Dir | File | Owns | Read by |
+|-----|------|------|---------|
+| [`configs/evals/`](configs/evals/) | `<name>.yaml` | the **run**: `app` / `device` / `workers` references + the run knobs (`model`, `limits`) | the launchers + `swarm_eval/target.py` |
+| [`configs/apps/`](configs/apps/) | `<name>.yaml` | the **app under test**: `target_apk`, `package`, `label`, `launch_activity`, and the mission slots (or `prompt:` → a [shared prompt](configs/apps/prompts/)) | the Python harness |
+| [`configs/devices/`](configs/devices/) | `<name>.yaml` | the **emulator** (provisioning only): `name`, `system_image`, `api`, `ram_mb`, `provision`, `frida`, `writable_system`, `headless`, … | the bash device layer (`bin/_spec.sh`) |
+| [`configs/workers/`](configs/workers/) | `<role>.yaml` | the **worker role**: role `notes` that open the mission (today one role, `dynamic`) | the Python harness |
 
-**To point the probe at a new app:** drop its APK at `apks/<app>/<app>.apk`, copy an existing
-`devices/<app>.yaml` (edit the top-level `target_apk` + the `app:` block), and pass that YAML —
-no Python or mission edits:
+The worker's mission is assembled by appending three note sources in order — **worker role → app
+→ device** — around the app-agnostic operating manual, so no app is special-cased in code.
+
+**To point the probe at a new app:** drop its APK at `apks/<app>/<app>.apk`, add three files —
+`configs/apps/<app>.yaml` (the app + a `prompt:` reference), `configs/devices/<app>.yaml`
+(copy an existing one, change `name`), and `configs/evals/<app>.yaml` (reference them) — then:
 
 ```bash
-uv run python single_agent.py devices/<app>.yaml --model anthropic/<other-model>
+uv run python single_agent.py configs/evals/<app>.yaml
+```
+
+### Run knobs: config defaults, CLI overrides
+
+The eval config carries the run's **defaults** so a run is fully replicable from the file alone:
+
+```yaml
+# configs/evals/<app>.yaml
+app: <app>              # -> configs/apps/<app>.yaml   (owns target_apk + mission slots)
+device: <app>           # -> configs/devices/<app>.yaml (provisioning only)
+workers:
+  - role: dynamic       # -> configs/workers/dynamic.yaml
+    count: 1            # total workers = Σ counts
+model: anthropic/claude-sonnet-4-5-20250929
+limits:
+  time_limit: 1800      # per-run Inspect --time-limit (s)
+  budget: 3600          # swarm launcher hard wall-clock (s)
+  cap: 6                # max workers before fail-fast
+# device-override whitelist (optional): ONLY these two device scalars may be overridden here
+#   writable_system: true
+#   headless: true
+```
+
+Any **CLI flag overrides** the matching config value for that run — **CLI > config > built-in
+default** — so `--model` and `--workers` still drive the model sweep and swarm sizing without
+editing the file:
+
+```bash
+uv run python swarm.py configs/evals/<app>.yaml --workers 3 --model anthropic/<other-model>
 ```
 
 `--model` is the **model-sweep lever**: the keyless sandbox Claude Code proxies to whatever host
-model you name (default `anthropic/claude-sonnet-4-5-20250929`), so swapping to another Anthropic
-model — or a cross-vendor `<provider>/<model>` — is a one-flag change.
+model you name, so swapping to another Anthropic model — or a cross-vendor `<provider>/<model>` —
+is a one-flag change.
 
-> **`<WIP>` — YAML-declared runs.** Run knobs (`--model`, `--workers`, `--time-limit`, `--budget`)
-> are still **CLI flags** today. The replicability goal is to fold them into the device YAML so a
-> run is fully declared by one file. The open design question is how to **split the YAML by
-> permission** — which keys an eval author may edit vs. which are locked to the harness.
-> Context-seed: [`.scratch/yaml-config-extension/`](.scratch/yaml-config-extension/).
+**Device-override whitelist.** An eval config may override **only** `writable_system` and
+`headless` from its device file (precedence **eval > device > built-in default**); every other
+device scalar stays fixed in `configs/devices/<name>.yaml`, the permission boundary between what an
+eval author tunes per run and what is locked to the device.
 
 ## For coding agents
 
@@ -115,7 +147,7 @@ Two deliberately separate halves:
 
 | Layer | Where | What |
 |-------|-------|------|
-| **Device layer** | [`bin/`](bin/README.md), `devices/`, `apks/` | Pure-bash, **Inspect-free** emulator broker: turns a device-spec into a booted, rooted, provisioned emulator and hands it out under a cap. |
+| **Device layer** | [`bin/`](bin/README.md), [`configs/devices/`](configs/devices/), `apks/` | Pure-bash, **Inspect-free** emulator broker: turns a device-spec into a booted, rooted, provisioned emulator and hands it out under a cap. |
 | **Inspect layer** | [`swarm-eval/`](swarm-eval/README.md) | The `swarm_eval` package: bridged Claude Code agents, the launchers (`single_agent.py`, `swarm.py`), the messageboard, and the arbiter. |
 
 Decisions behind the split live in [`docs/adr/`](docs/adr/); specs + tickets under `.scratch/<feature>/`;

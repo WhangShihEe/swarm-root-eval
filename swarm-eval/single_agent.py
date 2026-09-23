@@ -7,14 +7,15 @@ worker can't be trusted to free a scarce device; the lease is a launcher concern
 whether a single model makes progress and to check the single-agent environment works.
 
     # attack the RASP toy with the default model, 30-min per-run cap
-    python single_agent.py devices/rasp_dummy.yaml
+    python single_agent.py configs/evals/rasp_dummy.yaml
 
     # a real app under a sweep model, tighter caps
-    python single_agent.py devices/healthhub.yaml \
+    python single_agent.py configs/evals/healthhub.yaml \
         --model anthropic/claude-sonnet-4-5-20250929 --time-limit 1200 --message-limit 60
 
-The target is selected ENTIRELY by the device yaml (apk-agnostic): the same yaml is the broker's
-acquire spec and the agent's `-T spec=` target. This run gets NO board env, so `dynamic_agent`
+The target is selected ENTIRELY by the eval config (apk-agnostic): the launcher resolves it to the
+broker's acquire spec (device + APK), and the eval config itself is the agent's `-T spec=` target.
+This run gets NO board env, so `dynamic_agent`
 runs in single mode (the bare mission, no board tools). The scored self-report lands in the
 Inspect log under the run's log dir. A broker must be up first (`bin/broker start`).
 
@@ -53,7 +54,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class SingleConfig:
-    """One single-agent run's knobs. `spec` is the device yaml (the target selector + broker
+    """One single-agent run's knobs. `spec` is the eval config (the target selector + broker
     acquire spec). `log_root` defaults under `swarm-eval/`; the run logs into
     `log_root/<run-id>/`, where the injected device contract is also written."""
 
@@ -83,7 +84,7 @@ def run_single(
     run_id = mint_run_id("single")
     log_dir = config.log_root / run_id
     log_dir.mkdir(parents=True, exist_ok=True)
-    # Resolve the positional config (an eval config or a legacy device yaml) to learn which device
+    # Resolve the eval config to learn which device
     # the broker acquires and, when the config splits the APK out of the device, the APK to install
     # (`--target-apk`). The `-T spec=` below stays the positional itself — the in-task load_target
     # reads it back into the same TargetConfig (apk-agnostic).
@@ -129,7 +130,7 @@ def _pick(cli, cfg, default):
 def build_config(args: argparse.Namespace) -> SingleConfig:
     """Map parsed args + the eval config's run knobs → `SingleConfig`, resolving CLI > config >
     built-in default per knob (ticket 03). A CLI flag left unset is `None` here (see `parse_args`),
-    so the eval config's value stands; a legacy device yaml yields an empty `RunConfig`, so the
+    so the eval config's value stands; an eval config that omits a knob leaves it unset, so the
     built-in defaults apply (no regression). `--log-dir` is only forwarded when given, so the
     under-`swarm-eval/` default stands otherwise."""
     run = load_run_config(args.spec)
@@ -149,7 +150,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="single_agent", description="Launch one dynamic-agent run (ticket 03)."
     )
-    p.add_argument("spec", help="eval config or device yaml selecting the target/run, e.g. "
+    p.add_argument("spec", help="eval config selecting the target/run, e.g. "
                                 "configs/evals/rasp_dummy.yaml")
     # Run-knob flags default to None (not the built-in default) so an unset flag is distinguishable
     # from one passed with the default value — `build_config` then applies CLI > config > default.

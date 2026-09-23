@@ -94,7 +94,7 @@ Key facts already settled (don't re-litigate; do explain them if asked):
   `ANTHROPIC_BASE_URL=http://localhost:13131` with `model="inspect"`; the **host-side**
   `inspect eval --model anthropic/claude-…` serves the real call. Model sweep = one flag.
 - **Sample = one APK**; dataset = the target ladder; **N (swarm size) = a solver parameter**.
-- The harness (`bin/`, `devices/`) stays **Inspect-free**; the new Inspect code is a separate
+- The harness (`bin/`, `configs/devices/`) stays **Inspect-free**; the new Inspect code is a separate
   Python project (proposed dir `swarm/`, not `inspect/` — it shadows stdlib `inspect`).
 
 # Testing and verification

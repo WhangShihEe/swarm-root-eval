@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 # Device-spec loader/validator. Sourced by bin/env-up and bin/env-down.
 #
-# A device-spec is the declarative YAML (devices/pixel-a37.yaml) that drives the device
+# A device-spec is the declarative YAML (configs/devices/<name>.yaml) that drives the device
 # layer — the harness is spec-driven from the first line, nothing about the device is
 # hardcoded in the scripts (CONTEXT.md: "Device-spec"). Parsed with mikefarah `yq` v4,
 # the harness's pinned YAML dependency (doctor asserts it).

@@ -1,9 +1,8 @@
 # Shared mission prompts
 
-> yaml-config ticket 02: this is the home for shared prompts under the new `configs/` shape. An
-> **app file** (`configs/apps/<app>.yaml`) references one via `prompt: <name>`. The legacy
-> `devices/prompts/` copy still serves the not-yet-migrated combined device yamls until ticket 04
-> moves the corpus targets over here.
+> The home for shared prompts under the `configs/` shape. An **app file**
+> (`configs/apps/<app>.yaml`) references one via `prompt: <name>`. (yaml-config ticket 04 retired
+> the legacy `devices/prompts/` copy — every corpus target now references a prompt here.)
 
 One eval flow, authored once, reused across many app files. A prompt file here holds the three
 app-agnostic mission slots — `objective`, `success_signal`, `details` — that would otherwise be
@@ -46,7 +45,7 @@ Edit the flow for every app in one place: change the prompt file, not each app f
 
 ## Consumers
 
-None yet under the new shape: the only target split into `configs/` so far (`rasp_dummy`) inlines
-its own slots in `configs/apps/rasp_dummy.yaml`. Ticket 04 migrates the 10 corpus targets into
-`configs/apps/<app>.yaml` app files that reference `get-running-disable-rasp` here, and retires
-the legacy `devices/prompts/` copy those specs read today.
+The 10 corpus targets — `configs/apps/{cpf,dbs,healthhub,healthy365,mytransport,parking_sg,
+scamshield,sgsecure,singpass,singtel}.yaml` — all reference `get-running-disable-rasp`.
+(`configs/apps/rasp_dummy.yaml` is the older toy target and inlines its own slots.) `parking_sg`
+adds its paid-session integrity example via an inline `objective_append`.

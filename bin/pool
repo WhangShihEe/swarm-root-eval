@@ -3,11 +3,11 @@
 # set of provisioned emulators on distinct ports. No standing service (that is the ticket-06
 # broker) — every subcommand is a one-shot against the file-backed registry under POOL_DIR.
 #
-#   bin/pool acquire --spec devices/rootbeer.yaml [--target-apk <apk>] [--window]
+#   bin/pool acquire --spec configs/devices/rasp_dummy.yaml [--target-apk <apk>] [--window]
 #   bin/pool status
 #   bin/pool release --serial emulator-5554        # or --port 5554
 #   bin/pool down-all
-#   bin/pool demo    --spec devices/rootbeer.yaml   # acquire 2, print serials, release both
+#   bin/pool demo    --spec configs/devices/rasp_dummy.yaml   # acquire 2, print serials, release both
 #
 # Cap is POOL_CAP (default 6); state lives under POOL_DIR (default <repo>/.pool).
 set -uo pipefail

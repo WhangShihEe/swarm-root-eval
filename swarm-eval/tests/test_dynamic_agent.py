@@ -93,7 +93,7 @@ def test_dynamic_agent_selects_target_purely_from_spec_yaml():
     assert "RASP Target" in rasp.dataset[0].input
     assert list(rasp.dataset[0].files) == ["/root/rasp_dummy.apk"]
 
-    hh = da.dynamic_agent(spec="devices/healthhub.yaml")
+    hh = da.dynamic_agent(spec="configs/evals/healthhub.yaml")
     assert "HealthHub" in hh.dataset[0].input
     assert "RASP Target" not in hh.dataset[0].input
     # the split set's base is the decompile target + is staged (splits ride along if the corpus
@@ -106,7 +106,7 @@ def test_build_dynamic_task_builds_from_targetconfig():
     # (device acquire against the target's spec), scorer, and the staged file-set.
     from swarm_eval.target import load_target
 
-    target = load_target("devices/rasp_dummy.yaml")
+    target = load_target("configs/evals/rasp_dummy.yaml")
     t = da.build_dynamic_task(target, time_limit=321)
     assert t.time_limit == 321
     assert t.dataset[0].files == dict(target.files)

@@ -20,13 +20,13 @@ Start the **broker once** before an eval; it persists across requests. Clients a
 
 ```
 bin/broker start [--profile frida-only|writable-system] [--foreground]
-bin/broker acquire --spec devices/<name>.yaml [--target-apk <apk>] [env-up args…]
+bin/broker acquire --spec configs/devices/<name>.yaml [--target-apk <apk>] [env-up args…]
 bin/broker release (--serial emulator-5554 | --port 5554)
 bin/broker status
 bin/broker list
 bin/broker ping
 bin/broker stop
-bin/broker demo    --spec devices/<name>.yaml
+bin/broker demo    --spec configs/devices/<name>.yaml
 ```
 
 | Verb | What it does |
@@ -112,7 +112,7 @@ Internal helpers (`_broker.sh`, `_pool.sh`, `_provision.sh`, `_spec.sh`, `_devic
 source bin/env.sh                       # PATH + versions.txt; see ../RUNBOOK.md step 0
 bin/doctor                              # must exit 0
 bin/broker start                        # once, per-spec profile
-bin/broker acquire --spec devices/rasp_dummy.yaml
+bin/broker acquire --spec configs/devices/rasp_dummy.yaml
 #   → serial=emulator-5554 console_port=5554 adb_port=5555 profile=writable-system
 bin/broker status
 bin/broker release --serial emulator-5554

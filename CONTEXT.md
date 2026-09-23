@@ -49,7 +49,7 @@ the term as defined here; don't drift to synonyms. Decisions that shaped these l
   settings. Provisioning itself writes only to `/data`; modifying `/system` is the separate
   **writable-`/system` launch profile** step (disable-verity + remount), not provisioning —
   under the Frida-only profile `/system` stays untouched.
-- **Device-spec** — the declarative YAML (`devices/pixel-a37.yaml`) that drives the device
+- **Device-spec** — the declarative YAML (`configs/devices/<name>.yaml`) that drives the device
   layer, parsed with **`yq`** (a pinned harness dependency).
 - **Reset = full rebuild** — every bring-up and every reset is create → cold boot → provision
   from scratch. No golden snapshot (revisit only if bring-up time proves a bottleneck).
