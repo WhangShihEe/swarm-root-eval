@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Swarm run review</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --ink: #1c2330;
+    --muted: #667085;
+    --line: #e3e6eb;
+    --lane: #fbfcfd;
+    --lane-alt: #f2f4f7;
+    --accent: #3b5bdb;
+    --note: #7a8699;
+    --finding: #2f7de1;
+    --success: #1f9d55;
+    --giveup: #e08a1e;
+    --done: #8b5cf6;
+    --board: #334155;
+    --win-bg: #e7f6ee;
+    --win-ink: #0f7a43;
+    --fail-bg: #fdeceb;
+    --fail-ink: #b42318;
+    --quiet-bg: #fff4e5;
+    --quiet-ink: #b45309;
+    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.1);
+    --lane-h: 74px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1319; --panel: #171c25; --ink: #e6e9ef; --muted: #9aa4b2;
+      --line: #262d38; --lane: #141a22; --lane-alt: #10151c; --board: #cbd5e1;
+      --win-bg: #10331f; --win-ink: #56d98b; --fail-bg: #3a1513; --fail-ink: #f9a29a;
+      --quiet-bg: #3a2a10; --quiet-ink: #f5c877;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1319; --panel: #171c25; --ink: #e6e9ef; --muted: #9aa4b2;
+    --line: #262d38; --lane: #141a22; --lane-alt: #10151c; --board: #cbd5e1;
+    --win-bg: #10331f; --win-ink: #56d98b; --fail-bg: #3a1513; --fail-ink: #f9a29a;
+    --quiet-bg: #3a2a10; --quiet-ink: #f5c877;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header.run {
+    padding: 18px 16px 12px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  .run-top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .run-top h1 { font-size: 16px; margin: 0; font-weight: 650; letter-spacing: .01em; }
+  .swarm-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); font-size: 12.5px; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px;
+    font-weight: 650; font-size: 12.5px;
+  }
+  .badge.success { background: var(--win-bg); color: var(--win-ink); }
+  .badge.failure { background: var(--fail-bg); color: var(--fail-ink); }
+  .badge.pending { background: var(--lane-alt); color: var(--muted); }
+  .totals { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; color: var(--muted); font-size: 12.5px; }
+  .totals b { color: var(--ink); font-weight: 640; }
+  .tabs { display: flex; gap: 4px; padding: 8px 12px 0; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .tab {
+    appearance: none; border: 0; background: transparent; color: var(--muted); cursor: pointer;
+    padding: 9px 14px; font: inherit; font-weight: 600; border-bottom: 2px solid transparent;
+  }
+  .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+  main { padding: 16px; max-width: 1400px; margin: 0 auto; }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* Legend */
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; color: var(--muted); font-size: 12px; }
+  .legend .k { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  .dot.note { background: var(--note); } .dot.finding { background: var(--finding); }
+  .dot.success { background: var(--success); } .dot.giveup { background: var(--giveup); }
+  .dot.done { background: var(--done); }
+
+  /* Forum swimlanes */
+  .forum-wrap { display: grid; grid-template-columns: 190px 1fr; gap: 0; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow); }
+  .axis { grid-column: 2; height: 26px; position: relative; border-bottom: 1px solid var(--line);
+    background: var(--lane-alt); font-size: 10.5px; color: var(--muted); }
+  .axis .tick { position: absolute; top: 0; height: 100%; border-left: 1px solid var(--line); padding-left: 4px; white-space: nowrap; }
+  .axis-corner { grid-column: 1; border-bottom: 1px solid var(--line); border-right: 1px solid var(--line);
+    background: var(--lane-alt); }
+  .lanes-labels { grid-column: 1; border-right: 1px solid var(--line); }
+  .lanes-track { grid-column: 2; position: relative; }
+  .lane-label {
+    height: var(--lane-h); padding: 8px 10px; border-bottom: 1px solid var(--line); display: flex;
+    flex-direction: column; justify-content: center; gap: 3px; overflow: hidden;
+  }
+  .lane-label .name { font-weight: 650; font-size: 12.5px; display: flex; align-items: center; gap: 6px; }
+  .lane-label .role { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .lane-label .status { font-size: 11px; color: var(--muted); white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+  .lane-row { height: var(--lane-h); border-bottom: 1px solid var(--line); position: relative; }
+  .lane-row:nth-child(even) { background: var(--lane-alt); }
+  .lane-row.board { background: color-mix(in srgb, var(--accent) 7%, var(--lane)); }
+  .chip {
+    position: absolute; top: 50%; transform: translate(-50%, -50%); width: 15px; height: 15px;
+    border-radius: 50%; border: 2px solid var(--panel); cursor: pointer; z-index: 3;
+    display: flex; align-items: center; justify-content: center; font-size: 9px; color: #fff;
+  }
+  .chip.note { background: var(--note); } .chip.finding { background: var(--finding); }
+  .chip.success { background: var(--success); } .chip.giveup { background: var(--giveup); }
+  .chip.done { background: var(--done); }
+  .chip.dm { border-style: dashed; }
+  .chip.win { box-shadow: 0 0 0 3px var(--win-ink); }
+  .author-tick { position: absolute; top: 50%; transform: translate(-50%,-50%); width: 6px; height: 6px;
+    border-radius: 50%; opacity: .38; z-index: 1; }
+  .connector { position: absolute; width: 0; border-left: 1.5px dashed var(--finding); opacity: .55; z-index: 2; }
+  .win-flag { color: var(--win-ink); font-size: 11px; }
+  .quiet-flag { background: var(--quiet-bg); color: var(--quiet-ink); border-radius: 4px; padding: 0 5px;
+    font-size: 10px; font-weight: 600; }
+
+  /* Dashboard */
+  table.dash { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; overflow: hidden; box-shadow: var(--shadow); }
+  table.dash th, table.dash td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  table.dash th { color: var(--muted); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .03em; }
+  table.dash tr.detail td { background: var(--lane-alt); padding: 0; }
+  .detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px 20px; padding: 12px 16px; }
+  .detail-grid div { font-size: 12.5px; }
+  .detail-grid .kk { color: var(--muted); font-size: 11px; display: block; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .pill.success { background: var(--win-bg); color: var(--win-ink); }
+  .pill.giveup { background: var(--quiet-bg); color: var(--quiet-ink); }
+  .pill.errored, .pill.limit { background: var(--fail-bg); color: var(--fail-ink); }
+  .pill.completed, .pill.unknown, .pill.started { background: var(--lane-alt); color: var(--muted); }
+  .role-tag { font-size: 11px; color: var(--muted); }
+  .expander { cursor: pointer; user-select: none; color: var(--accent); font-weight: 600; }
+  .split { color: var(--muted); font-size: 11.5px; }
+
+  /* Inspect */
+  .inspect-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px;
+    box-shadow: var(--shadow); max-width: 720px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; background: var(--accent); color: #fff;
+    text-decoration: none; padding: 9px 14px; border-radius: 8px; font-weight: 600; font-size: 13px; }
+  .btn.secondary { background: var(--lane-alt); color: var(--ink); border: 1px solid var(--line); }
+  .link-list { list-style: none; padding: 0; margin: 14px 0 0; display: flex; flex-direction: column; gap: 8px; }
+  .link-list a { color: var(--accent); text-decoration: none; font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; }
+  .note-box { margin-top: 14px; padding: 10px 12px; background: var(--lane-alt); border-radius: 8px;
+    color: var(--muted); font-size: 12px; }
+
+  /* Detail drawer */
+  .drawer { position: fixed; top: 0; right: 0; height: 100%; width: min(440px, 92vw); background: var(--panel);
+    border-left: 1px solid var(--line); box-shadow: -4px 0 24px rgba(16,24,40,.16); transform: translateX(100%);
+    transition: transform .18s ease; z-index: 50; display: flex; flex-direction: column; }
+  .drawer.open { transform: translateX(0); }
+  .drawer header { padding: 14px 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
+  .drawer .body { padding: 14px 16px; overflow: auto; }
+  .drawer .meta { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .drawer pre { white-space: pre-wrap; word-break: break-word; font: 12.5px/1.55 ui-monospace, Menlo, monospace; margin: 0; }
+  .drawer .close { margin-left: auto; cursor: pointer; border: 0; background: transparent; color: var(--muted); font-size: 18px; }
+  .empty { color: var(--muted); padding: 30px; text-align: center; }
+</style>
+</head>
+<body>
+<!-- ============================================================================================
+     THE SINGLE DATA SOURCE. Cut 1 inlines the run as JSON here; the later live phase swaps ONLY
+     `getRunData()` below to fetch this same shape from a server endpoint (+ SSE) — the rendering
+     code never changes. See viewer.py::build_view_model for the shape.
+     ========================================================================================== -->
+<script id="run-data" type="application/json">__RUN_DATA__</script>
+
+<header class="run">
+  <div class="run-top">
+    <h1>Swarm run review</h1>
+    <span id="verdict-badge"></span>
+    <span class="swarm-id" id="swarm-id"></span>
+  </div>
+  <div class="totals" id="totals"></div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="tab" role="tab" data-view="forum" aria-selected="true">Forum</button>
+  <button class="tab" role="tab" data-view="dashboard" aria-selected="false">Dashboard</button>
+  <button class="tab" role="tab" data-view="inspect" aria-selected="false">Inspect transcripts</button>
+</nav>
+
+<main>
+  <section id="forum" class="view active">
+    <div class="legend" id="legend"></div>
+    <div class="forum-wrap" id="forum-wrap"></div>
+  </section>
+
+  <section id="dashboard" class="view">
+    <table class="dash"><thead><tr>
+      <th></th><th>Agent</th><th>Role</th><th>Device</th><th>Status</th>
+      <th>Last activity</th><th>Messages</th><th>DMs</th><th>Outcome</th>
+    </tr></thead><tbody id="dash-body"></tbody></table>
+  </section>
+
+  <section id="inspect" class="view">
+    <div class="inspect-card" id="inspect-card"></div>
+  </section>
+</main>
+
+<aside class="drawer" id="drawer">
+  <header>
+    <span class="dot" id="drawer-dot"></span>
+    <strong id="drawer-title"></strong>
+    <button class="close" id="drawer-close" aria-label="Close">&times;</button>
+  </header>
+  <div class="body">
+    <div class="meta" id="drawer-meta"></div>
+    <pre id="drawer-content"></pre>
+  </div>
+</aside>
+
+<script>
+"use strict";
+
+// -- THE single data-source seam (see the data island comment above). Live phase: replace the
+//    body of getRunData with a fetch of the same JSON shape; nothing else in this file changes.
+function getRunData() {
+  const el = document.getElementById("run-data");
+  return JSON.parse(el.textContent);
+}
+
+const TYPE_GLYPH = { note: "✎", finding: "?", success: "✓", giveup: "✗", done: "⚑" };
+const TYPES = ["note", "finding", "success", "giveup", "done"];
+
+const RUN = getRunData();
+
+function fmtClock(ms) {
+  if (ms == null) return "—";
+  const d = new Date(ms);
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+function fmtElapsed(ms, t0) {
+  if (ms == null || t0 == null) return "";
+  const s = Math.max(0, Math.round((ms - t0) / 1000));
+  const m = Math.floor(s / 60);
+  return "+" + m + ":" + String(s % 60).padStart(2, "0");
+}
+function fmtSecs(s) { return s == null ? "—" : Math.round(s) + "s"; }
+function fmtNum(n) { return n == null ? "—" : n.toLocaleString(); }
+function fmtCost(c) { return c == null ? "—" : "$" + c.toFixed(2); }
+function esc(s) { return (s == null ? "" : String(s)); }
+
+// x-position (%) of a timestamp on the wall-clock axis. Silence => literal gap (linear time).
+function xpct(ms) {
+  const t0 = RUN.time.start_ms, t1 = RUN.time.end_ms;
+  if (ms == null || t0 == null || t1 == null) return 50;
+  if (t1 === t0) return 50;
+  return ((ms - t0) / (t1 - t0)) * 100;
+}
+
+// ---- header ----------------------------------------------------------------------------------
+function renderHeader() {
+  document.getElementById("swarm-id").textContent = RUN.swarm_id;
+  const v = RUN.verdict, badge = document.getElementById("verdict-badge");
+  let cls = "pending", label = "no verdict";
+  if (v.value === "SUCCESS") { cls = "success"; label = "SUCCESS · " + (v.winner || "?"); }
+  else if (v.value === "FAILURE") { cls = "failure"; label = "FAILURE"; }
+  badge.innerHTML = '<span class="badge ' + cls + '">' + esc(label) + "</span>";
+
+  const t = RUN.totals;
+  document.getElementById("totals").innerHTML = [
+    ["agents", t.agents], ["board msgs", t.board_messages], ["findings", t.findings],
+    ["successes", t.successes], ["give-ups", t.giveups], ["DMs", t.dms],
+    ["tokens", fmtNum(t.total_tokens)], ["cost", fmtCost(t.total_cost)],
+  ].map(([k, val]) => "<span><b>" + esc(val) + "</b> " + k + "</span>").join("");
+}
+
+// ---- forum swimlanes -------------------------------------------------------------------------
+function renderLegend() {
+  document.getElementById("legend").innerHTML = TYPES.map(ty =>
+    '<span class="k"><span class="dot ' + ty + '"></span>' + ty + "</span>"
+  ).join("") + '<span class="k"><span class="dot" style="border:1.5px dashed var(--finding);background:transparent"></span>DM (dashed → recipient lane)</span>';
+}
+
+function renderForum() {
+  const lanes = RUN.lanes;                      // ["board", "worker-1", ...]
+  const laneIndex = {};
+  lanes.forEach((l, i) => laneIndex[l] = i);
+  const wrap = document.getElementById("forum-wrap");
+  const t0 = RUN.time.start_ms;
+
+  // axis ticks
+  let axisTicks = "";
+  const NT = 6;
+  for (let i = 0; i <= NT; i++) {
+    const frac = i / NT;
+    const ms = (RUN.time.start_ms != null && RUN.time.end_ms != null)
+      ? RUN.time.start_ms + frac * (RUN.time.end_ms - RUN.time.start_ms) : null;
+    axisTicks += '<span class="tick" style="left:' + (frac * 100) + '%">' +
+      fmtClock(ms) + " <span style=\"opacity:.7\">" + fmtElapsed(ms, t0) + "</span></span>";
+  }
+
+  // lane labels (board + each worker with role + final status.txt as the lane label)
+  const workerById = {};
+  RUN.workers.forEach(w => workerById[w.worker_id] = w);
+  let labels = "";
+  lanes.forEach(lane => {
+    if (lane === "board") {
+      labels += '<div class="lane-label"><span class="name">📋 Board</span>' +
+        '<span class="role">broadcast timeline</span></div>';
+    } else {
+      const w = workerById[lane] || {};
+      const quiet = w.went_quiet ? ' <span class="quiet-flag">quiet</span>' : "";
+      const win = w.is_winner ? ' <span class="win-flag">★</span>' : "";
+      labels += '<div class="lane-label"><span class="name">' + esc(lane) + win + quiet + "</span>" +
+        '<span class="role">' + esc(w.role || "?") + " · " + esc(w.device || "?") + "</span>" +
+        '<span class="status" title="' + esc(w.status_text || "") + '">' + esc(w.status_text || "—") + "</span></div>";
+    }
+  });
+
+  // lane rows + connectors + chips
+  let rows = lanes.map(lane =>
+    '<div class="lane-row ' + (lane === "board" ? "board" : "") + '" data-lane="' + esc(lane) + '"></div>'
+  ).join("");
+
+  wrap.innerHTML =
+    '<div class="axis-corner"></div>' +
+    '<div class="axis">' + axisTicks + "</div>" +
+    '<div class="lanes-labels">' + labels + "</div>" +
+    '<div class="lanes-track" id="lanes-track">' + rows + "</div>";
+
+  const track = document.getElementById("lanes-track");
+  const laneH = 74;
+  const centerOf = (lane) => laneIndex[lane] * laneH + laneH / 2;
+
+  RUN.events.forEach(ev => {
+    const x = xpct(ev.ts_ms);
+    // DM: dashed connector from sender lane to recipient lane at the same x, chip in recipient lane
+    if (ev.kind === "dm" && laneIndex[ev.author] != null && laneIndex[ev.lane] != null) {
+      const y1 = centerOf(ev.author), y2 = centerOf(ev.lane);
+      const top = Math.min(y1, y2), h = Math.abs(y2 - y1);
+      const c = document.createElement("div");
+      c.className = "connector";
+      c.style.left = x + "%"; c.style.top = top + "px"; c.style.height = h + "px";
+      track.appendChild(c);
+    }
+    // faint author tick in the poster's own lane (per-worker activity density / silence gaps)
+    if (ev.kind === "board" && laneIndex[ev.author] != null) {
+      const tick = document.createElement("div");
+      tick.className = "author-tick " + ev.type;
+      tick.style.left = x + "%"; tick.style.top = centerOf(ev.author) + "px";
+      tick.style.background = "var(--" + (TYPES.includes(ev.type) ? ev.type : "note") + ")";
+      track.appendChild(tick);
+    }
+    // the chip itself, in its lane (board lane for posts, recipient lane for DMs)
+    if (laneIndex[ev.lane] != null) {
+      const chip = document.createElement("div");
+      const win = (ev.type === "success" && RUN.verdict.trigger_id === ev.id) ? " win" : "";
+      chip.className = "chip " + ev.type + (ev.kind === "dm" ? " dm" : "") + win;
+      chip.style.left = x + "%"; chip.style.top = centerOf(ev.lane) + "px";
+      chip.textContent = TYPE_GLYPH[ev.type] || "";
+      chip.title = ev.author + (ev.kind === "dm" ? " → " + ev.recipient : "") + ": " + ev.subject;
+      chip.addEventListener("click", () => openDrawer(ev));
+      track.appendChild(chip);
+    }
+  });
+
+  if (!RUN.events.length) {
+    track.innerHTML += '<div class="empty">No forum activity recorded for this run.</div>';
+  }
+}
+
+// ---- dashboard -------------------------------------------------------------------------------
+function renderDashboard() {
+  const body = document.getElementById("dash-body");
+  body.innerHTML = "";
+  RUN.workers.forEach((w, i) => {
+    const tr = document.createElement("tr");
+    const win = w.is_winner ? ' <span class="win-flag" title="decided the verdict">★</span>' : "";
+    const quiet = w.went_quiet ? ' <span class="quiet-flag">quiet</span>' : "";
+    const msg = w.messages;
+    tr.innerHTML =
+      '<td><span class="expander" data-row="' + i + '">▸</span></td>' +
+      "<td><strong>" + esc(w.worker_id) + "</strong>" + win + "</td>" +
+      '<td><span class="role-tag">' + esc(w.role || "?") + "</span></td>" +
+      "<td>" + esc(w.device || "?") + "</td>" +
+      '<td title="' + esc(w.status_text || "") + '" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+        esc(w.status_text || "—") + "</td>" +
+      "<td>" + fmtClock(w.last_activity_ms) + quiet + "</td>" +
+      '<td>' + msg.total + ' <span class="split">(' + msg.findings + "f / " + msg.notes + "n)</span></td>" +
+      '<td>' + w.dms.sent + "↑ " + w.dms.received + "↓</td>" +
+      '<td><span class="pill ' + esc(w.outcome) + '">' + esc(w.outcome) + "</span></td>";
+    body.appendChild(tr);
+
+    const dtr = document.createElement("tr");
+    dtr.className = "detail"; dtr.style.display = "none";
+    dtr.dataset.detail = i;
+    const s = w.stats || {};
+    dtr.innerHTML = '<td colspan="9"><div class="detail-grid">' + [
+      ["served model", esc(s.served_model || "—")],
+      ["eval status", esc(s.status || "—")],
+      ["turns", fmtNum(s.turn_count)],
+      ["messages (transcript)", fmtNum(s.message_count)],
+      ["total tokens", fmtNum(s.total_tokens)],
+      ["input / output", fmtNum(s.input_tokens) + " / " + fmtNum(s.output_tokens)],
+      ["cost", fmtCost(s.total_cost)],
+      ["wall-clock time", fmtSecs(s.total_time)],
+      ["working time", fmtSecs(s.working_time)],
+      ["started", fmtClock(s.started_at_ms)],
+      ["completed", fmtClock(s.completed_at_ms)],
+      ["limit", esc(s.limit || "—")],
+      ["error", esc(s.error || "—")],
+    ].map(([k, v]) => '<div><span class="kk">' + k + "</span>" + v + "</div>").join("") +
+      (w.eval_url ? '<div><span class="kk">inspect</span><a href="' + esc(w.eval_url) +
+        '" target="_blank" rel="noopener">open .eval ↗</a></div>' : "") +
+      "</div></td>";
+    body.appendChild(dtr);
+  });
+
+  body.querySelectorAll(".expander").forEach(x => x.addEventListener("click", () => {
+    const i = x.dataset.row;
+    const d = body.querySelector('tr.detail[data-detail="' + i + '"]');
+    const open = d.style.display !== "none";
+    d.style.display = open ? "none" : "table-row";
+    x.textContent = open ? "▸" : "▾";
+  }));
+}
+
+// ---- inspect (link-out only) -----------------------------------------------------------------
+function renderInspect() {
+  const card = document.getElementById("inspect-card");
+  const ins = RUN.inspect;
+  let links = "";
+  RUN.workers.forEach(w => {
+    const url = ins.workers[w.worker_id];
+    if (url) links += '<li>' + esc(w.worker_id) + ": <a href=\"" + esc(url) +
+      '" target="_blank" rel="noopener">' + esc(w.worker_id) + '.eval ↗</a></li>';
+  });
+  card.innerHTML =
+    "<h3 style=\"margin-top:0\">Inspect transcripts</h3>" +
+    "<p style=\"color:var(--muted)\">Full per-agent transcripts live in Inspect's own viewer. It " +
+    "cannot be embedded here (it sets <code>frame-ancestors 'none'</code>), so these open in a new tab.</p>" +
+    '<a class="btn" href="' + esc(ins.view_url) + '" target="_blank" rel="noopener">Open inspect view ↗</a> ' +
+    '<a class="btn secondary" href="' + esc(ins.log_dir_url) + '" target="_blank" rel="noopener">This run’s log dir ↗</a>' +
+    '<ul class="link-list">' + links + "</ul>" +
+    '<div class="note-box">Requires <code>inspect view --recursive</code> running on ' +
+    esc(ins.view_url) + ' (the swarm auto-starts it). If the tab fails to load, start it first.</div>';
+}
+
+// ---- detail drawer ---------------------------------------------------------------------------
+function openDrawer(ev) {
+  const dr = document.getElementById("drawer");
+  document.getElementById("drawer-dot").className = "dot " + ev.type;
+  document.getElementById("drawer-title").textContent = ev.subject || "(no subject)";
+  const route = ev.kind === "dm" ? (ev.author + " → " + ev.recipient + " (DM)") : (ev.author + " → board");
+  document.getElementById("drawer-meta").textContent =
+    route + " · " + ev.type + " · " + fmtClock(ev.ts_ms) + " " + fmtElapsed(ev.ts_ms, RUN.time.start_ms);
+  document.getElementById("drawer-content").textContent = ev.content || "";
+  dr.classList.add("open");
+}
+document.getElementById("drawer-close").addEventListener("click", () =>
+  document.getElementById("drawer").classList.remove("open"));
+
+// ---- tabs ------------------------------------------------------------------------------------
+document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", () => {
+  document.querySelectorAll(".tab").forEach(t => t.setAttribute("aria-selected", "false"));
+  tab.setAttribute("aria-selected", "true");
+  document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
+  document.getElementById(tab.dataset.view).classList.add("active");
+}));
+
+// ---- render all (a single re-render is all the live phase needs to re-invoke) ----------------
+function renderAll() {
+  renderHeader();
+  renderLegend();
+  renderForum();
+  renderDashboard();
+  renderInspect();
+}
+renderAll();
+</script>
+</body>
+</html>
