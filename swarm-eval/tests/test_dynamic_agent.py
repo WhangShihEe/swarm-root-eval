@@ -11,6 +11,17 @@ import pytest
 import dynamic_agent as da
 from swarm_eval.agent_runner import ENV_DEVICE_CONTRACT
 from swarm_eval.broker_client import Contract
+from swarm_eval.conductor import ENV_FORUM_DIR, ENV_ROLE, ENV_SWARM_ID, ENV_WORKER_IDS
+from swarm_eval.board_tools import ENV_AGENT_ID
+
+
+@pytest.fixture(autouse=True)
+def _single_mode(monkeypatch):
+    # These are the single-mode wiring tests: pin single mode so a swarm coordinate leaked by
+    # another module (e.g. board_agent's `os.environ.setdefault(SWARM_ID, …)`) can't flip
+    # `swarm_mode()` on and make `build_dynamic_task` expect a forum.
+    for var in (ENV_SWARM_ID, ENV_FORUM_DIR, ENV_AGENT_ID, ENV_ROLE, ENV_WORKER_IDS):
+        monkeypatch.delenv(var, raising=False)
 
 CONTRACT = Contract(serial="emulator-5554", console_port=5554, adb_port=5555, profile="writable-system")
 CONTRACT_LINE = CONTRACT.render_contract_line()

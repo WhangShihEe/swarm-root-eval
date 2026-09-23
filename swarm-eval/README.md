@@ -51,12 +51,18 @@ single-agent case.
 The `--model` flag is the **model-sweep lever** (the sandbox's keyless Claude Code proxies to the
 named served model). See "Model sweep" below.
 
-## The messageboard — the swarm's comms substrate
+## The forum — the swarm's comms substrate
 
-`src/swarm_eval/messageboard.py` + `src/swarm_eval/board_tools.py` (ticket 05a). An
-**append-only, one-file-per-message directory** on the host — the broker's no-append-races idiom:
+`src/swarm_eval/messageboard.py` + `src/swarm_eval/forum.py` + `src/swarm_eval/board_tools.py`
+(ticket 05a; forum + DMs from swarm-improvements 01). The swarm coordinates through a **forum**
+that lives **under the run's own log dir** at `logs/<swarm-id>/forum/`, so the whole conversation
+ships with the transcripts as one artifact (no post-run copy). It has two parts, both built on the
+same **append-only, one-file-per-message directory** — the broker's no-append-races idiom:
 concurrent runs never contend on a file, and a reader sees a whole message or none (writes land
-via atomic rename). It doubles as the swarm's shared memory.
+via atomic rename).
+
+**The broadcast board** (`forum/messageboard/`) — the swarm's shared memory, read/written by every
+agent:
 
 - **Reached via `inspect_swe` `bridged_tools`**, exposed to each agent as an MCP server named
   `board` — never Inspect's per-sample `store`, never raw `host.docker.internal`. The tools run
@@ -71,6 +77,24 @@ via atomic rename). It doubles as the swarm's shared memory.
   for the arbiter** — the worker-facing `post_message` forbids it (`allow_done=False`) so a worker
   can't fake termination; the arbiter builds its tools with `allow_done=True` and posts through
   the same substrate.
+
+**Direct messages + status** (`forum/dms/<worker-id>/`) — a per-agent inbox alongside the
+broadcast board, so one agent (a coordinator, later — see WIP below) can nudge a *single* peer
+without spamming the channel:
+
+- **Three more tools, same server** (`board`): `send_dm(to, subject, content, type)` delivers into
+  a peer's inbox (author host-stamped, `done` forbidden), `read_inbox(since)` reads the DMs sent to
+  you plus your own status, `set_status(status)` sets your short "currently working on …" line for
+  peers to see. A worker's inbox is `forum/dms/<worker-id>/`; its status is that dir's `status.txt`.
+- **Unread DMs are pushed into your next turn** — a targeted message reaches the recipient without
+  it having to poll. The push is a bridge generate-filter (`model_filters.make_swarm_turn_filter`,
+  the reusable "turn-injection plumbing"): each turn it appends this worker's DMs-since-last as a
+  fresh top-priority user message and advances a cursor so each DM is delivered exactly once.
+
+> **`<WIP>`** — swarm-improvements: **board adoption** (push the unread board index into every turn,
+> ranked below DMs; ticket 02), **roles** (`static`/`coordinator` device-less workers, the
+> coordinator being the heaviest DM user; ticket 03), a **post-run report** over the forum (ticket
+> 04), and a **bespoke live/review forum UI** (ticket 05).
 
 The arbiter is a **host-side rubric** (`evaluate_board`), not a separate bridged run — a
 deliberate simplification: an LLM can't be trusted to honor a wall-clock budget, and the verdict
@@ -117,7 +141,8 @@ device-verifying oracle is deferred (inspect-swarm ticket 06).
   into the run as `INSPECT_LOG_DIR`.
 - **Swarm run** → `logs/<swarm-id>/` (`swarm-id` = `swarm-<utc>-<shortid>`), with **one subdir per
   worker** `logs/<swarm-id>/<agent-id>/` (each worker's own `INSPECT_LOG_DIR` + `console.out`
-  live tail) and the saved `messageboard/`. Both are written even if a step raises.
+  live tail) and the live **`forum/`** (`messageboard/` + `dms/<worker-id>/`). Both are written as
+  the run goes, so a crash never loses the conversation.
 - **View a run:** `inspect view --log-dir logs/<id> --recursive`. The Conductor auto-starts this
   webview (`--no-view` to skip; `--view-port`, default 7575); `--recursive` lists every worker's
   log as a distinguishable entry.
@@ -163,7 +188,7 @@ stall. Bedrock/Anthropic ignore `strict`, so the Claude sweep models work untouc
 | `smoke.py` | Bridge/toolchain smoke slice. |
 | `src/swarm_eval/agent_runner.py` | Shared host-side per-run machinery (lease, contract, argv/env, subprocess). |
 | `src/swarm_eval/conductor.py` | The swarm launcher / arbiter / collator. |
-| `src/swarm_eval/messageboard.py` · `board_tools.py` | The board substrate + its bridged tools. |
+| `src/swarm_eval/messageboard.py` · `forum.py` · `board_tools.py` | The board + forum (DMs/status) substrate and their bridged tools. |
 | `src/swarm_eval/mission.py` | The one generic mission + self-report oracle. |
 | `src/swarm_eval/target.py` · `model_filters.py` · `broker_client.py` | Target resolution · sweep filters · broker client. |
 | `Dockerfile` · `compose.yaml` · `sandbox/` | The offensive-toolchain sandbox image (host-network so sandboxed adb reaches the host emulator). |

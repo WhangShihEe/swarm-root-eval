@@ -1,14 +1,15 @@
 """The Conductor — the external swarm launcher/arbiter/collator (ticket 05b).
 
-Turns N ticket-04 agent runs + the 05a board into one swarm run. Entirely **outside** Inspect
-(ADR-0002): Inspect has no cross-run shared state, so the swarm layer — launch, coordinate,
-judge, collate — lives host-side. Per swarm run the Conductor:
+Turns N ticket-04 agent runs + the 05a board (now the forum, ticket 01) into one swarm run.
+Entirely **outside** Inspect (ADR-0002): Inspect has no cross-run shared state, so the swarm
+layer — launch, coordinate, judge, collate — lives host-side. Per swarm run the Conductor:
 
-  board up  →  devices acquired  →  worker runs launched  →  arbitrate (wait for a verdict)
-            →  post `done`  →  collate + save board  →  release all devices  →  teardown
+  forum up  →  devices acquired  →  worker runs launched  →  arbitrate (wait for a verdict)
+            →  post `done`  →  release all devices  →  teardown
 
-Every device is released and the board is saved even if a step raises (the `finally` below), so
-a crashed run never leaks a scarce broker slot or loses the conversation.
+Every device is released even if a step raises (the `finally` below), so a crashed run never
+leaks a scarce broker slot. The forum (board + per-worker DM inboxes) is written live under the
+swarm log dir, so the conversation is already the artifact — no post-run copy to lose.
 
 **Arbiter = a host-side rubric**, not a separate bridged run (a deliberate simplification of the
 ticket's "own bridged run": an LLM cannot be trusted to honour a wall-clock budget, and the
@@ -28,7 +29,6 @@ same code path as N>1, not special-cased.
 from __future__ import annotations
 
 import logging
-import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -51,26 +51,27 @@ from .agent_runner import acquire as broker_acquire
 from .agent_runner import release as broker_release
 from .board_tools import ENV_AGENT_ID
 from .broker_client import DEFAULT_SPEC, Contract
+from .forum import ENV_FORUM_DIR, ENV_WORKER_IDS, Forum
 from .messageboard import (
-    ENV_BOARD_DIR,
     ENV_SWARM_ID,
     TYPE_DONE,
     TYPE_GIVEUP,
     TYPE_SUCCESS,
     Board,
-    board_dir,
 )
 from .target import load_target
 
 logger = logging.getLogger(__name__)
 
-# The swarm-only slice of the launcher↔run injection contract: the board coordinates the
+# The swarm-only slice of the launcher↔run injection contract: the forum coordinates the
 # Conductor sets per worker on TOP of the shared per-run pair (`DEVICE_CONTRACT` +
-# `INSPECT_LOG_DIR`, owned by `agent_runner`). `ENV_BOARD_DIR`/`ENV_SWARM_ID` (the board's own,
-# from messageboard) and `ENV_AGENT_ID` (board_tools) are re-used; these are the swarm-launch
-# additions. Their presence (`SWARM_ID`) is what tells a run it is a swarm worker, not a single.
+# `INSPECT_LOG_DIR`, owned by `agent_runner`). `ENV_FORUM_DIR` (the forum root under the swarm
+# log dir, from `forum`), `ENV_SWARM_ID` (from `messageboard`) and `ENV_AGENT_ID` (board_tools)
+# are re-used; these are the swarm-launch additions. Their presence (`SWARM_ID`) is what tells a
+# run it is a swarm worker, not a single.
 ENV_ROLE = "ROLE"
-ENV_WORKER_IDS = "SWARM_WORKER_IDS"  # the worker roster, so a run knows its peers by name
+# ENV_WORKER_IDS (the peer roster) is defined in `forum` and re-exported here (imported above), so
+# a worker knows its peers by name and the board tools can validate a DM recipient against it.
 
 ROLE_WORKER = "worker"
 ROLE_ARBITER = "arbiter"  # the author the host-side arbiter stamps on its `done` verdict
@@ -124,9 +125,10 @@ def worker_agent_id(i: int) -> str:
 
 @dataclass(frozen=True)
 class SwarmConfig:
-    """One swarm run's knobs. `board_root`/`log_root` default under `swarm-eval/`; the launched
-    runs resolve the actual board at `board_root/<swarm-id>/` and log into `log_root/<swarm-id>/`.
-    """
+    """One swarm run's knobs. `log_root` defaults under `swarm-eval/`; the launched runs log into
+    `log_root/<swarm-id>/` and coordinate through the forum at `log_root/<swarm-id>/forum/`
+    (ticket 01 — the forum lives under the run's own log dir, so there is no separate board root
+    and no post-run copy)."""
 
     workers: int = 1
     model: str = DEFAULT_MODEL
@@ -140,7 +142,6 @@ class SwarmConfig:
     poll_interval: float = 2.0  # how often the arbiter re-reads the board
     view: bool = True  # auto-start the inspect webview over the logs (05d); --no-view opts out
     view_port: int = DEFAULT_VIEW_PORT  # the auto-started webview's port
-    board_root: Path = field(default_factory=lambda: swarm_eval_dir() / "board")
     log_root: Path = field(default_factory=lambda: swarm_eval_dir() / "logs")
 
 
@@ -173,15 +174,16 @@ def build_run_env(
     agent_id: str,
     role: str,
     log_dir: Path,
+    forum_dir: Path,
     device_contract: Path | None = None,
     worker_ids: list[str] | None = None,
 ) -> dict[str, str]:
-    """The env injected into one worker run: the swarm-only board coordinates layered on top of
-    the shared per-run pair (`DEVICE_CONTRACT` + `INSPECT_LOG_DIR`) via `agent_runner`. The board
-    coordinates (`SWARM_ID` etc.) are the swarm signal a worker keys off; kept minimal so a test
-    can assert the injection exactly."""
+    """The env injected into one worker run: the swarm-only forum coordinates layered on top of
+    the shared per-run pair (`DEVICE_CONTRACT` + `INSPECT_LOG_DIR`) via `agent_runner`. `FORUM_DIR`
+    is the run-wide forum root (shared by every worker); `SWARM_ID` etc. are the swarm signal a
+    worker keys off. Kept minimal so a test can assert the injection exactly."""
     board_env = {
-        ENV_BOARD_DIR: str(config.board_root),
+        ENV_FORUM_DIR: str(forum_dir),
         ENV_SWARM_ID: swarm_id,
         ENV_AGENT_ID: agent_id,
         ENV_ROLE: role,
@@ -189,7 +191,7 @@ def build_run_env(
     if worker_ids:
         board_env[ENV_WORKER_IDS] = ",".join(worker_ids)
     if device_contract is None:
-        # A contract-less role (no device) still carries its log dir + the board coordinates.
+        # A contract-less role (no device) still carries its log dir + the forum coordinates.
         return {ENV_INSPECT_LOG_DIR: str(log_dir), **board_env}
     return agent_runner.build_run_env(
         contract_path=device_contract, log_dir=log_dir, board_env=board_env
@@ -322,9 +324,13 @@ class Conductor:
         swarm_id = mint_swarm_id()
         log_dir = cfg.log_root / swarm_id
         log_dir.mkdir(parents=True, exist_ok=True)
-        board = Board(board_dir(cfg.board_root, swarm_id))
-        board.ensure()
         worker_ids = [worker_agent_id(i) for i in range(1, cfg.workers + 1)]
+        # The forum lives under the run's own log dir (ticket 01): board + per-worker DM inboxes,
+        # created up front so a worker's first DM has a home. No separate board root, no post-run
+        # copy — the coordination record ships with the transcripts as one artifact.
+        forum = Forum(log_dir / "forum")
+        forum.ensure(worker_ids)
+        board = forum.board
 
         acquired: list[str] = []  # serials to release at teardown (populated as we acquire)
         handles: list[RunHandle] = []
@@ -332,8 +338,8 @@ class Conductor:
         done_posted = False  # did the arbiter announce `done`? gates the cooperative-stop window
         logger.info("swarm %s: %d worker(s), board=%s", swarm_id, cfg.workers, board.path)
         try:
-            # board up → devices acquired (all, before any launch) → runs launched.
-            specs = self._acquire_and_plan(swarm_id, log_dir, worker_ids, acquired)
+            # forum up → devices acquired (all, before any launch) → runs launched.
+            specs = self._acquire_and_plan(swarm_id, log_dir, forum.root, worker_ids, acquired)
             logger.info("swarm %s: acquired %d device(s): %s", swarm_id, len(acquired),
                         ", ".join(acquired))
             # Append each handle as it is spawned (not a comprehension): if a later launch raises,
@@ -357,14 +363,15 @@ class Conductor:
             logger.info("swarm %s: verdict %s — %s", swarm_id, verdict.value, verdict.reason)
             return SwarmResult(swarm_id, log_dir, board.path, verdict, worker_ids)
         finally:
-            # A failure at any step still releases devices, stops the webview, and saves what exists.
+            # A failure at any step still releases devices and stops the webview. The forum needs
+            # no saving — it is written live under the swarm log dir, so it is already the artifact.
             self._shutdown(handles, cooperative=done_posted)
             self._stop_view(view_handle)
-            self._save_board(board, log_dir)
             self._release_all(acquired)
 
     def _acquire_and_plan(
-        self, swarm_id: str, log_dir: Path, worker_ids: list[str], acquired: list[str]
+        self, swarm_id: str, log_dir: Path, forum_dir: Path, worker_ids: list[str],
+        acquired: list[str],
     ) -> list[RunSpec]:
         """Pre-acquire one device per worker (the dynamic role) and build each run's spec. Each
         worker gets its OWN log dir `log_dir/<agent-id>/` (05c: restores the ADR-0002
@@ -403,6 +410,7 @@ class Conductor:
                         agent_id=agent_id,
                         role=ROLE_WORKER,
                         log_dir=agent_log_dir,
+                        forum_dir=forum_dir,
                         device_contract=contract_path,
                         worker_ids=worker_ids,
                     ),
@@ -430,7 +438,7 @@ class Conductor:
 
     def _stop_view(self, view_handle: ViewHandle | None) -> None:
         """Stop the auto-started webview server (05d). Best-effort: a failure is logged, never
-        raised — it must not mask the run error or block device release (like `_save_board`)."""
+        raised — it must not mask the run error or block device release (best-effort, like the release)."""
         if view_handle is None:
             return
         try:
@@ -487,19 +495,6 @@ class Conductor:
                     h.wait(timeout=max(0.0, deadline - self._clock()))
                 except Exception:  # noqa: BLE001 — a timeout (or a fake's raise) just means move on
                     pass
-
-    def _save_board(self, board: Board, log_dir: Path) -> None:
-        """Copy the board dir into `log_dir/messageboard/` so the swarm artifact = transcripts +
-        the conversation, one folder. Never fatal: a save failure is logged, not raised (it must
-        not mask the real run error or block device release)."""
-        dest = log_dir / "messageboard"
-        try:
-            if dest.exists():
-                shutil.rmtree(dest)
-            if board.path.exists():
-                shutil.copytree(board.path, dest)
-        except Exception as e:  # noqa: BLE001 — collation is best-effort
-            logger.warning("swarm: could not save board into %s: %s", dest, e)
 
     def _release_all(self, acquired: list[str]) -> None:
         """Guaranteed device release: free every acquired serial. `release` never raises, so one

@@ -57,8 +57,8 @@ def build_config(args: argparse.Namespace) -> SwarmConfig:
     """Map parsed args + the eval config's run knobs → `SwarmConfig`, resolving CLI > config >
     built-in default per knob (ticket 03): `--workers`/`--model`/limits/budget/cap left unset are
     `None` here (see `parse_args`), so the eval config's value stands; a knob the eval config omits
-    is left unset, so the built-in defaults apply (no regression). `--board-dir`/`--log-dir` are
-    only forwarded when given, so the config's under-`swarm-eval/` defaults stand otherwise."""
+    is left unset, so the built-in defaults apply (no regression). `--log-dir` is only forwarded
+    when given, so the config's under-`swarm-eval/` default stands otherwise."""
     run = load_run_config(args.spec)
     kwargs: dict = dict(
         workers=_pick(args.workers, run.worker_count, DEFAULT_WORKERS),
@@ -73,8 +73,6 @@ def build_config(args: argparse.Namespace) -> SwarmConfig:
         view=args.view,
         view_port=args.view_port,
     )
-    if args.board_dir is not None:
-        kwargs["board_root"] = args.board_dir
     if args.log_dir is not None:
         kwargs["log_root"] = args.log_dir
     return SwarmConfig(**kwargs)
@@ -112,10 +110,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="don't auto-start the inspect webview; print the manual command instead")
     p.add_argument("--view-port", type=int, default=DEFAULT_VIEW_PORT,
                    help=f"port for the auto-started inspect webview (default {DEFAULT_VIEW_PORT})")
-    p.add_argument("--board-dir", type=Path, default=None,
-                   help="board root (default swarm-eval/board); the board is <root>/<swarm-id>/")
     p.add_argument("--log-dir", type=Path, default=None,
-                   help="log root (default swarm-eval/logs); logs land in <root>/<swarm-id>/")
+                   help="log root (default swarm-eval/logs); logs + the forum land in "
+                        "<root>/<swarm-id>/ (the forum at <root>/<swarm-id>/forum/)")
     return p.parse_args(argv)
 
 
@@ -130,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     v = result.verdict
     print(f"\nswarm {result.swarm_id}: {v.value} — {v.reason}")
     print(f"  workers:  {', '.join(result.worker_ids)}")
-    print(f"  artifact: {result.log_dir}  (transcripts + messageboard/)")
+    print(f"  artifact: {result.log_dir}  (transcripts + forum/: messageboard + dms/)")
     # Exit 0 on a SUCCESS verdict, 1 on FAILURE — a swarm that ran fine but did not crack the app
     # is a clean non-zero, distinct from the exit-2 setup failure above.
     return 0 if v.value == SUCCESS else 1

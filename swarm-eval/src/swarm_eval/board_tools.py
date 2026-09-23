@@ -1,14 +1,22 @@
-"""`bridged_tools` over the messageboard — the swarm's comms tools (ticket 05a).
+"""`bridged_tools` over the forum — the swarm's comms tools (ticket 05a; forum/DMs from
+swarm-improvements 01).
 
 Each agent-run exposes these to its bridged Claude Code agent via `inspect_swe`'s
-`bridged_tools`. They run **host-side**, in the run's own process, against the shared board dir
-(`Board.from_env`) — so a worker sandbox needs no network for the board (adb still does, 04).
+`bridged_tools`. They run **host-side**, in the run's own process — so a worker sandbox needs no
+network for coordination (adb still does, 04). Two families, one `board` MCP server:
 
-Two-tier read keeps agent context clean: `list_messages` hands back the subject index only,
-`read_message` pulls full bodies on demand. **`author` is stamped host-side** from the run's
-injected `AGENT_ID` — the tools take no author input, so one run cannot forge another's author.
-`done` is reserved for the arbiter (05b): the worker `post_message` forbids it; the arbiter
-builds its tools with `allow_done=True`.
+- **Board (broadcast):** `post_message`/`list_messages`/`read_message`. Two-tier read keeps agent
+  context clean — `list_messages` hands back the subject index only, `read_message` pulls full
+  bodies on demand. The board resolves the forum's `messageboard/` when a forum is injected
+  (`FORUM_DIR`), falling back to the legacy `BOARD_DIR`/`SWARM_ID` board for the standalone
+  `board_agent` demo.
+- **DMs (targeted, ticket 01):** `send_dm`/`read_inbox`/`set_status` over the forum's
+  `dms/<worker-id>/` inboxes — forum-only (they require `FORUM_DIR`).
+
+**`author` is stamped host-side** from the run's injected `AGENT_ID` — the tools take no author
+input, so one run cannot forge another's author (a DM's recipient is likewise the inbox it lands
+in, not a spoofable field). `done` is reserved for the arbiter (05b): `post_message`/`send_dm`
+forbid it; the arbiter builds its board tools with `allow_done=True`.
 """
 
 from __future__ import annotations
@@ -19,6 +27,7 @@ import os
 from inspect_ai.agent import BridgedToolsSpec
 from inspect_ai.tool import Tool, ToolError, tool
 
+from .forum import ENV_WORKER_IDS, Forum
 from .messageboard import Board, BoardError
 
 # MCP server name — the agent sees the tools as `mcp__board_post_message`, etc.
@@ -39,11 +48,39 @@ def _agent_id() -> str:
     return author
 
 
-def _board() -> Board:
+def _or_tool_error(build):
+    """Run a `from_env` constructor, turning the substrate's `BoardError` (missing/invalid config)
+    into a `ToolError` the agent sees — one place, so `_board`/`_forum` don't each repeat it."""
     try:
-        return Board.from_env()
+        return build()
     except BoardError as e:
         raise ToolError(str(e)) from e
+
+
+def _board() -> Board:
+    # Prefer the forum (the swarm path, ticket 01): its board is `forum/messageboard/`. Fall back
+    # to the legacy `BOARD_DIR`/`SWARM_ID` board when no forum is injected — the standalone
+    # `board_agent` demo still runs on that pair.
+    forum = Forum.from_env_or_none()
+    if forum is not None:
+        return forum.board
+    return _or_tool_error(Board.from_env)
+
+
+def _forum() -> Forum:
+    """The forum this run belongs to. Unlike the board (which has a legacy fallback for the demo),
+    the DM/status tools are swarm-only — they require `FORUM_DIR` and error clearly without it."""
+    return _or_tool_error(Forum.from_env)
+
+
+def _roster() -> set[str] | None:
+    """This run's known peers (from the injected `SWARM_WORKER_IDS`), or None when no roster was
+    injected. Used to validate a DM recipient: a swarm run always has one, so an unknown `to` is a
+    typo, not a valid address; a run without a roster (a bare test) skips the check."""
+    raw = os.environ.get(ENV_WORKER_IDS)
+    if not raw:
+        return None
+    return {w for w in raw.split(",") if w}
 
 
 @tool
@@ -119,13 +156,120 @@ def read_message() -> Tool:
     return execute
 
 
+@tool
+def send_dm() -> Tool:
+    async def execute(to: str, subject: str, content: str, type: str = "note") -> str:
+        """Send a DIRECT message to one specific agent's inbox (not the whole board).
+
+        Use this for targeted coordination — nudging one peer's direction, handing off a lead —
+        instead of broadcasting to everyone on the board. The recipient sees it pushed into its
+        next turn (ranked above the board) and can also pull it with `read_inbox`. Your author
+        identity is stamped automatically — you cannot send as anyone else.
+
+        Args:
+            to: The recipient agent id (e.g. "worker-2"), exactly as it appears in the roster.
+            subject: A short one-line summary.
+            content: The full message body.
+            type: One of "note" (default), "finding", or "success". ("done" is reserved for the
+                arbiter and cannot be sent.)
+
+        Returns:
+            The id of the delivered message.
+        """
+        if type == "done":
+            raise ToolError('message type "done" is reserved for the arbiter')
+        if not to or not to.strip():
+            raise ToolError("send_dm needs a recipient agent id (`to`)")
+        roster = _roster()
+        if roster is not None and to not in roster:
+            # A DM to an unknown id would land in a phantom inbox nobody reads (the message lost
+            # silently); fail loudly with the valid recipients instead.
+            raise ToolError(
+                f"unknown DM recipient {to!r}; the swarm's agents are: "
+                f"{', '.join(sorted(roster))}"
+            )
+        try:
+            msg = _forum().send_dm(
+                sender=_agent_id(), to=to, subject=subject, content=content, type=type
+            )
+        except BoardError as e:
+            raise ToolError(str(e)) from e
+        return msg.id
+
+    return execute
+
+
+@tool
+def read_inbox() -> Tool:
+    async def execute(since: str | None = None) -> str:
+        """Read your DM inbox: the direct messages sent to you, plus your own current status.
+
+        DMs are also pushed into your turn automatically as they arrive; use this to re-check or
+        to page through them. Full bodies are returned (DMs are targeted and low-volume, so there
+        is no subject-only index tier like the board's).
+
+        Args:
+            since: Optional message-id cursor. When given, only DMs delivered after it are
+                returned — pass the id of the last DM you saw to poll for what's new.
+
+        Returns:
+            A JSON object `{"status": <your current status or null>, "messages": [full DMs]}`,
+            messages oldest first, each `{id, ts, author, subject, type, content}`.
+        """
+        forum = _forum()
+        me = _agent_id()
+        dms = forum.read_dms(me, since=since)
+        return json.dumps(
+            {"status": forum.get_status(me), "messages": [m.to_dict() for m in dms]},
+            ensure_ascii=False,
+        )
+
+    return execute
+
+
+@tool
+def set_status() -> Tool:
+    async def execute(status: str) -> str:
+        """Set your short "currently working on …" status, visible to your peers and coordinators.
+
+        Keep it to one line describing your current focus (e.g. "hooking RootBeer.isRooted via
+        frida"). It overwrites your previous status — it reflects what you are doing NOW, not a
+        log (post durable findings to the board).
+
+        Args:
+            status: The one-line status text.
+
+        Returns:
+            A short confirmation.
+        """
+        _forum().set_status(_agent_id(), status)
+        return "status set"
+
+    return execute
+
+
 def board_tools(*, allow_done: bool = False) -> list[Tool]:
     """The three board tools for one run. `allow_done=True` for the arbiter run (05b), which is
     the only participant permitted to post the reserved `done` verdict."""
     return [post_message(allow_done=allow_done), list_messages(), read_message()]
 
 
+def forum_tools(*, allow_done: bool = False) -> list[Tool]:
+    """The full forum toolset a swarm worker gets (ticket 01): the three board tools plus the
+    direct-messaging layer (`send_dm`/`read_inbox`/`set_status`). The board tools fall back to the
+    legacy board when no forum is injected; the DM/status tools are forum-only."""
+    return [*board_tools(allow_done=allow_done), send_dm(), read_inbox(), set_status()]
+
+
 def board_tools_spec(*, allow_done: bool = False) -> BridgedToolsSpec:
     """The `bridged_tools` entry a solver hands to `inspect_swe.claude_code(bridged_tools=[...])`
-    — one MCP server (`BOARD_MCP_NAME`) exposing the three board tools to the sandboxed agent."""
+    — one MCP server (`BOARD_MCP_NAME`) exposing the three board tools to the sandboxed agent.
+    Used by the standalone `board_agent` demo; swarm workers use `forum_tools_spec`."""
     return BridgedToolsSpec(name=BOARD_MCP_NAME, tools=board_tools(allow_done=allow_done))
+
+
+def forum_tools_spec(*, allow_done: bool = False) -> BridgedToolsSpec:
+    """The `bridged_tools` entry for a swarm worker: one MCP server (`BOARD_MCP_NAME`) exposing
+    the board tools AND the DM/status tools (ticket 01). Kept under the same server name so the
+    agent reaches everything as `mcp__board_*`."""
+    return BridgedToolsSpec(name=BOARD_MCP_NAME, tools=forum_tools(allow_done=allow_done))

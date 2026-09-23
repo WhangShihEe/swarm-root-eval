@@ -90,8 +90,15 @@ def board_dir(root: os.PathLike[str] | str, swarm_id: str) -> Path:
     return Path(root) / swarm_id
 
 
+def safe_slug(value: str) -> str:
+    """A filesystem-safe slug: every char outside `[A-Za-z0-9._-]` collapses to '_', empty → 'anon'.
+    Shared so the board (message filenames) and the forum (per-worker DM/inbox dir names) sanitize
+    identically — a worker id maps to one, and only one, on-disk directory."""
+    return _UNSAFE.sub("_", value) or "anon"
+
+
 def _safe_author(author: str) -> str:
-    return _UNSAFE.sub("_", author) or "anon"
+    return safe_slug(author)
 
 
 class Board:

@@ -30,16 +30,20 @@ def test_build_config_maps_flags_and_keeps_default_roots():
     assert config.time_limit == 1200
     assert config.budget == 2700.0
     assert config.cap == 5
-    # unset --board-dir/--log-dir → the SwarmConfig defaults (under swarm-eval/) stand
-    assert config.board_root.name == "board"
+    # unset --log-dir → the SwarmConfig default (under swarm-eval/) stands
     assert config.log_root.name == "logs"
 
 
-def test_build_config_forwards_explicit_dirs(tmp_path):
-    args = cli.parse_args([YAML, "--board-dir", str(tmp_path / "b"), "--log-dir", str(tmp_path / "l")])
+def test_build_config_forwards_explicit_log_dir(tmp_path):
+    # ticket 01: the forum lives under the log dir, so there is no separate --board-dir any more.
+    args = cli.parse_args([YAML, "--log-dir", str(tmp_path / "l")])
     config = cli.build_config(args)
-    assert config.board_root == tmp_path / "b"
     assert config.log_root == tmp_path / "l"
+
+
+def test_board_dir_flag_is_removed():
+    with pytest.raises(SystemExit):
+        cli.parse_args([YAML, "--board-dir", "/tmp/whatever"])
 
 
 def test_view_is_on_by_default(tmp_path):

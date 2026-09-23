@@ -38,8 +38,11 @@ with in-process subagents — doesn't work here: concurrent subagents collapse o
 transcript span. So android-swarm runs **each worker as its own independent `inspect eval`**
 (one run = one bridge = one clean transcript) and wires the swarm together **outside Inspect**,
 from a host launcher. The workers share no Inspect state; their _only_ link is a host-side,
-append-only **messageboard**. The full story lives in
-[`swarm-eval/README.md`](swarm-eval/README.md) and [`docs/adr/0002-…`](docs/adr/0002-separate-runs-swarm-no-central-orchestrator.md).
+append-only **forum** — a broadcast **messageboard** plus per-agent **direct-message inboxes**
+(a DM is pushed into the recipient's next turn), written live under the run's log dir. _Heterogeneous
+roles (a device-less `coordinator` that directs peers over the forum, a `static` analyst), a post-run
+report, and a bespoke live/review UI are `<WIP>` (see [`.scratch/swarm-improvements/`](.scratch/swarm-improvements/))._
+The full story lives in [`swarm-eval/README.md`](swarm-eval/README.md) and [`docs/adr/0002-…`](docs/adr/0002-separate-runs-swarm-no-central-orchestrator.md).
 
 ## Quickstart
 
@@ -152,7 +155,7 @@ Two deliberately separate halves:
 | Layer | Where | What |
 |-------|-------|------|
 | **Device layer** | [`bin/`](bin/README.md), [`configs/devices/`](configs/devices/), `apks/` | Pure-bash, **Inspect-free** emulator broker: turns a device-spec into a booted, rooted, provisioned emulator and hands it out under a cap. |
-| **Inspect layer** | [`swarm-eval/`](swarm-eval/README.md) | The `swarm_eval` package: bridged Claude Code agents, the launchers (`single_agent.py`, `swarm.py`), the messageboard, and the arbiter. |
+| **Inspect layer** | [`swarm-eval/`](swarm-eval/README.md) | The `swarm_eval` package: bridged Claude Code agents, the launchers (`single_agent.py`, `swarm.py`), the forum (messageboard + DMs), and the arbiter. |
 
 Decisions behind the split live in [`docs/adr/`](docs/adr/); specs + tickets under `.scratch/<feature>/`;
 a from-scratch manual device bring-up in [`RUNBOOK.md`](RUNBOOK.md).

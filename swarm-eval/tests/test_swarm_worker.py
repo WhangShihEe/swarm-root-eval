@@ -13,6 +13,7 @@ from swarm_eval.agent_runner import ENV_DEVICE_CONTRACT
 from swarm_eval.broker_client import Contract
 from swarm_eval.conductor import (
     ENV_AGENT_ID,
+    ENV_FORUM_DIR,
     ENV_ROLE,
     ENV_SWARM_ID,
     ENV_WORKER_IDS,
@@ -40,8 +41,9 @@ def _state():
 
 @pytest.fixture(autouse=True)
 def _clean_swarm_env(monkeypatch):
-    # keep every test starting from single mode unless it opts into the board coordinates
-    for var in (ENV_DEVICE_CONTRACT, ENV_SWARM_ID, ENV_AGENT_ID, ENV_ROLE, ENV_WORKER_IDS):
+    # keep every test starting from single mode unless it opts into the forum coordinates
+    for var in (ENV_DEVICE_CONTRACT, ENV_SWARM_ID, ENV_AGENT_ID, ENV_ROLE, ENV_WORKER_IDS,
+                ENV_FORUM_DIR):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -103,6 +105,7 @@ def test_task_swarm_mode_wraps_prompt_and_stamps_metadata(monkeypatch, tmp_path)
     monkeypatch.setenv(ENV_AGENT_ID, "worker-1")
     monkeypatch.setenv(ENV_ROLE, "worker")
     monkeypatch.setenv(ENV_WORKER_IDS, "worker-1,worker-2")
+    monkeypatch.setenv(ENV_FORUM_DIR, str(tmp_path / "forum"))  # a swarm worker always has one
 
     t = da.dynamic_agent()
     assert t.metadata == {"swarm_id": "swarm-abc", "agent_id": "worker-1", "role": "worker"}
@@ -118,6 +121,7 @@ def test_task_swarm_mode_honours_spec_selected_target(monkeypatch, tmp_path):
     monkeypatch.setenv(ENV_SWARM_ID, "swarm-abc")
     monkeypatch.setenv(ENV_AGENT_ID, "worker-1")
     monkeypatch.setenv(ENV_WORKER_IDS, "worker-1")
+    monkeypatch.setenv(ENV_FORUM_DIR, str(tmp_path / "forum"))
 
     t = da.dynamic_agent(spec="configs/evals/healthhub.yaml")
     prompt = t.dataset[0].input

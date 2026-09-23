@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import re
 
+from typing import Awaitable, Callable
+
 from inspect_ai.model import (
     ChatMessage,
     ChatMessageAssistant,
     ChatMessageSystem,
+    ChatMessageUser,
     Content,
     ContentReasoning,
     ContentText,
@@ -21,6 +24,9 @@ from inspect_ai.model import (
     ModelOutput,
 )
 from inspect_ai.tool import ToolChoice, ToolInfo
+
+from .forum import Forum
+from .messageboard import Message
 
 # Closed <think>…</think> / <thinking>…</thinking> blocks that some served models (Qwen3,
 # DeepSeek-R1, etc.) leak as literal TEXT instead of structured reasoning. Left in place they
@@ -150,3 +156,61 @@ async def sweep_generate_filter(
     if output.completion:
         output.completion = _strip_think_text(output.completion)
     return output
+
+
+# ---- ticket 01: per-turn push of unread DMs (the "turn-injection plumbing") ----------------
+
+# A bridge generate-filter: same signature the bridge calls on every model turn.
+Filter = Callable[
+    [Model, list[ChatMessage], list[ToolInfo], ToolChoice | None, GenerateConfig],
+    Awaitable[ModelOutput | GenerateInput | None],
+]
+
+
+def _dm_injection(dms: list[Message]) -> str:
+    """The user-message text that carries the unread DMs into a turn. A DM is targeted at this
+    agent, so it is framed as top-priority — ticket 02 will add the board's unread index BELOW
+    this (the ticket's "ranked above board notes"); this builder is the top section of that
+    composition."""
+    lines = [
+        "[FORUM · direct messages] You have new direct message(s) sent to you since your last "
+        "turn. They are addressed to you specifically — read and act on them before other work:"
+    ]
+    for m in dms:
+        lines.append(f"- from {m.author} — [{m.type}] {m.subject}: {m.content}")
+    lines.append("(Re-read your inbox any time with the `read_inbox` tool.)")
+    return "\n".join(lines)
+
+
+def make_swarm_turn_filter(agent_id: str, *, forum: Forum | None = None) -> Filter:
+    """Build the swarm worker's generate-filter: push this agent's unread DMs into its next turn,
+    then run the shared `sweep_generate_filter` hygiene (system-merge + reasoning-strip).
+
+    This is the ticket-01 "turn-injection plumbing" ticket 02 reuses: each turn it reads the DMs
+    delivered to `agent_id` since the last one it injected (a per-run cursor held in the closure —
+    the filter runs host-side in the worker's own process), appends them as a fresh user message
+    so a targeted DM reaches the recipient without it having to poll, and advances the cursor so
+    each DM is pushed exactly once. The injected message is not persisted into the bridge's
+    transcript, so it never re-accumulates; the agent can re-fetch with `read_inbox`.
+
+    `forum` defaults to `Forum.from_env()` — the conductor injects `FORUM_DIR`.
+    """
+    forum = forum or Forum.from_env()
+    last: str | None = None  # deliver-once cursor: the id of the last DM already pushed
+
+    async def swarm_turn_filter(
+        model: Model,
+        messages: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice | None,
+        config: GenerateConfig,
+    ) -> ModelOutput | GenerateInput | None:
+        nonlocal last
+        dms = forum.read_dms(agent_id, since=last)
+        prepared = list(messages)
+        if dms:
+            last = dms[-1].id
+            prepared = [*messages, ChatMessageUser(content=_dm_injection(dms))]
+        return await sweep_generate_filter(model, prepared, tools, tool_choice, config)
+
+    return swarm_turn_filter

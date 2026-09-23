@@ -1,8 +1,8 @@
-"""Ticket 05b — the Conductor: env injection, the host-side arbiter rubric, and the full
-orchestration (device budget with guaranteed release, termination, board collation). Hermetic —
-the runner, broker, and clock are all injected fakes: no real subprocess, emulator, or wall-clock.
-The board is the *real* 05a substrate over a tmp dir (the conductor's coordination is proven end
-to end against it, not a mock)."""
+"""Ticket 05b (+ swarm-improvements 01) — the Conductor: env injection, the host-side arbiter
+rubric, and the full orchestration (device budget with guaranteed release, termination, the forum
+written under the log dir). Hermetic — the runner, broker, and clock are all injected fakes: no
+real subprocess, emulator, or wall-clock. The forum is the *real* substrate over a tmp dir (the
+conductor's coordination is proven end to end against it, not a mock)."""
 
 from pathlib import Path
 
@@ -16,7 +16,7 @@ from swarm_eval.conductor import (
     DEFAULT_VIEW_PORT,
     DISPLAY_CONVERSATION,
     ENV_AGENT_ID,
-    ENV_BOARD_DIR,
+    ENV_FORUM_DIR,
     ENV_INSPECT_LOG_DIR,
     ENV_ROLE,
     ENV_SWARM_ID,
@@ -33,7 +33,15 @@ from swarm_eval.conductor import (
     mint_swarm_id,
     worker_agent_id,
 )
+from swarm_eval.forum import Forum
 from swarm_eval.messageboard import Board, board_dir
+
+
+def _board_of(spec) -> Board:
+    """The board a launched worker would post to, reconstructed from its injected env — the forum's
+    messageboard (ticket 01). The fakes use this to make the board decisive, as a real worker
+    would by posting through its tools."""
+    return Forum(spec.env[ENV_FORUM_DIR]).board
 
 
 # ---- fakes ---------------------------------------------------------------------------------
@@ -160,7 +168,7 @@ def make_runner(outcomes: dict[str, str], *, stubborn: set[str] | None = None):
         agent_id = spec.env[ENV_AGENT_ID]
         kind = outcomes.get(agent_id)
         if kind:
-            b = Board(board_dir(spec.env[ENV_BOARD_DIR], spec.env[ENV_SWARM_ID]))
+            b = _board_of(spec)
             b.post(author=agent_id, subject=f"{agent_id} {kind}", content="x", type=kind)
         h = FakeHandle(stubborn=agent_id in stubborn)
         handles.append(h)
@@ -203,7 +211,6 @@ class FakeViewLauncher:
 
 def cfg(tmp_path: Path, **kw) -> SwarmConfig:
     base = dict(
-        board_root=tmp_path / "board",
         log_root=tmp_path / "logs",
         budget=5.0,
         poll_interval=2.0,
@@ -243,16 +250,18 @@ def test_worker_agent_id_is_one_based():
 
 def test_build_run_env_injects_the_full_contract(tmp_path):
     config = cfg(tmp_path)
+    forum_dir = tmp_path / "logs" / "swarm-x" / "forum"
     env = build_run_env(
         config=config,
         swarm_id="swarm-x",
         agent_id="worker-2",
         role=ROLE_WORKER,
         log_dir=tmp_path / "logs" / "swarm-x",
+        forum_dir=forum_dir,
         device_contract=tmp_path / "worker-2.device",
         worker_ids=["worker-1", "worker-2"],
     )
-    assert env[ENV_BOARD_DIR] == str(config.board_root)
+    assert env[ENV_FORUM_DIR] == str(forum_dir)
     assert env[ENV_SWARM_ID] == "swarm-x"
     assert env[ENV_AGENT_ID] == "worker-2"
     assert env[ENV_ROLE] == ROLE_WORKER
@@ -268,9 +277,11 @@ def test_build_run_env_omits_device_contract_and_roster_when_absent(tmp_path):
         agent_id="a",
         role="arbiter",
         log_dir=tmp_path,
+        forum_dir=tmp_path / "forum",
     )
     assert ENV_DEVICE_CONTRACT not in env
     assert ENV_WORKER_IDS not in env
+    assert env[ENV_FORUM_DIR] == str(tmp_path / "forum")
 
 
 def test_build_run_argv_defaults_carry_a_time_limit(tmp_path):
@@ -432,7 +443,7 @@ def test_run_writes_a_parseable_device_contract_per_worker(tmp_path):
         # capture the injected DEVICE_CONTRACT path so we can assert its content post-run
         agent_id = spec.env[ENV_AGENT_ID]
         seen[agent_id] = spec.env[ENV_DEVICE_CONTRACT]
-        b = Board(board_dir(spec.env[ENV_BOARD_DIR], spec.env[ENV_SWARM_ID]))
+        b = _board_of(spec)
         b.post(author=agent_id, subject="win", content="x", type="success")
         return FakeHandle()
 
@@ -445,16 +456,21 @@ def test_run_writes_a_parseable_device_contract_per_worker(tmp_path):
     assert all(str(result.log_dir) in p for p in seen.values())
 
 
-def test_run_saves_the_board_into_the_log_dir(tmp_path):
+def test_run_writes_the_forum_under_the_log_dir(tmp_path):
+    # ticket 01: the forum lives live under the swarm log dir (no post-run copy). The board is
+    # `logs/<swarm-id>/forum/messageboard/`, and `board_path` points at it.
     config = cfg(tmp_path, workers=1)
     broker = FakeBroker()
     result = _run(config, broker, make_runner({"worker-1": "success"}), FakeClock())
-    saved = result.log_dir / "messageboard"
-    assert saved.is_dir()
-    # the collated copy holds the same messages as the live board (incl. the arbiter's `done`)
-    live = {m["id"] for m in Board(result.board_path).list()}
-    copied = {p.stem for p in saved.glob("*.json")}
-    assert live and live == copied
+    board = result.log_dir / "forum" / "messageboard"
+    assert board.is_dir()
+    assert result.board_path == board
+    # the board holds the worker's post + the arbiter's `done`
+    ids = {m["id"] for m in Board(result.board_path).list()}
+    on_disk = {p.stem for p in board.glob("*.json")}
+    assert ids and ids == on_disk
+    # each worker's DM inbox dir was created up front, so a first DM has a home
+    assert (result.log_dir / "forum" / "dms" / "worker-1").is_dir()
 
 
 def test_run_kills_a_straggler_that_ignores_terminate(tmp_path):
@@ -487,7 +503,7 @@ def test_run_lets_a_worker_exit_cooperatively_before_terminating(tmp_path):
     coop = CooperativeHandle()
 
     def runner(spec: C.RunSpec) -> CooperativeHandle:
-        Board(board_dir(spec.env[ENV_BOARD_DIR], spec.env[ENV_SWARM_ID])).post(
+        _board_of(spec).post(
             author=spec.env[ENV_AGENT_ID], subject="win", content="x", type="success"
         )
         return coop
@@ -521,7 +537,7 @@ def test_run_gives_each_worker_its_own_log_dir_and_console_file(tmp_path):
     def runner(spec: C.RunSpec) -> FakeHandle:
         agent_id = spec.env[ENV_AGENT_ID]
         specs[agent_id] = spec
-        Board(board_dir(spec.env[ENV_BOARD_DIR], spec.env[ENV_SWARM_ID])).post(
+        _board_of(spec).post(
             author=agent_id, subject="win", content="x", type="success"
         )
         return FakeHandle()
@@ -576,7 +592,7 @@ def test_shutdown_kills_the_process_group_not_the_lone_process(tmp_path):
     h = RecordingHandle()
 
     def runner(spec: C.RunSpec) -> RecordingHandle:
-        Board(board_dir(spec.env[ENV_BOARD_DIR], spec.env[ENV_SWARM_ID])).post(
+        _board_of(spec).post(
             author=spec.env[ENV_AGENT_ID], subject="win", content="x", type="success"
         )
         return h
