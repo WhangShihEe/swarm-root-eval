@@ -8,7 +8,7 @@ logs) covers day-to-day needs; this ticket is the flashy upgrade.
 
 **Blocked by:** 01 (forum layout), 04 (owns the shared `run_reader` this UI consumes — see below).
 
-**Status:** backlog (design decided; not on the critical path — sequenced last)
+**Status:** done (cut 1 implemented; swarm-view self-contained HTML review; consumes run_reader unchanged; 332 passed; verified + merged. Live phase + status-change markers remain named follow-ups.)
 
 ---
 
