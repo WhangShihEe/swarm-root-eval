@@ -59,7 +59,7 @@ from .messageboard import (
     TYPE_SUCCESS,
     Board,
 )
-from .target import load_target
+from .target import WorkerRequest, load_target
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +72,23 @@ logger = logging.getLogger(__name__)
 ENV_ROLE = "ROLE"
 # ENV_WORKER_IDS (the peer roster) is defined in `forum` and re-exported here (imported above), so
 # a worker knows its peers by name and the board tools can validate a DM recipient against it.
+# ENV_ROSTER carries each peer's ROLE alongside its id (`worker-1:dynamic,worker-3:static,…`) so a
+# worker — the coordinator especially — can direct the right kind of worker (swarm-improvements 03).
+ENV_ROSTER = "SWARM_ROSTER"
 
-ROLE_WORKER = "worker"
+# The worker ROLES (swarm-improvements ticket 03), each selected purely by a `configs/workers/
+# <role>.yaml` filename (no `kind` field). `dynamic` leases a broker device and drives it; `static`
+# and `coordinator` are device-LESS — the conductor leases a device ONLY for `dynamic` workers.
+# Only `dynamic` workers decide the verdict (they alone confirm a bypass on a real device); `static`
+# feeds the board findings and `coordinator` directs, so neither gates the arbiter's rubric.
+ROLE_DYNAMIC = "dynamic"
+ROLE_STATIC = "static"
+ROLE_COORDINATOR = "coordinator"
 ROLE_ARBITER = "arbiter"  # the author the host-side arbiter stamps on its `done` verdict
+
+# The roles that get a device (and so decide the verdict). A one-element tuple today, but named so
+# the device-gating and the verdict quorum read from ONE list and cannot drift.
+DEVICE_ROLES = (ROLE_DYNAMIC,)
 
 # Verdict values — the same tokens the per-run self-report oracle uses.
 SUCCESS = "SUCCESS"
@@ -143,6 +157,25 @@ class SwarmConfig:
     view: bool = True  # auto-start the inspect webview over the logs (05d); --no-view opts out
     view_port: int = DEFAULT_VIEW_PORT  # the auto-started webview's port
     log_root: Path = field(default_factory=lambda: swarm_eval_dir() / "logs")
+    # The per-role roster (swarm-improvements ticket 03): a `{role, count}` list mixing
+    # `dynamic`/`static`/`coordinator`. Empty (the default and every pre-ticket-03 caller) means a
+    # homogeneous roster of `workers` `dynamic` agents, so the existing single-role path is
+    # unchanged; when set, it is the source of truth for how many workers of each role to launch.
+    roster: tuple[WorkerRequest, ...] = ()
+
+    def resolved_roster(self) -> tuple[WorkerRequest, ...]:
+        """The roster to launch: the explicit `roster` when set, else a homogeneous
+        `workers`×`dynamic` roster (the pre-ticket-03 shape, so an unset roster behaves exactly as
+        before)."""
+        return self.roster or (WorkerRequest(ROLE_DYNAMIC, self.workers),)
+
+    def worker_roles(self) -> list[str]:
+        """The role of each worker to launch, flattened in roster order (`[dynamic, dynamic,
+        static, coordinator]`). Its length is the total worker count; `worker-<i>` ids follow it."""
+        roles: list[str] = []
+        for req in self.resolved_roster():
+            roles.extend([req.role] * req.count)
+        return roles
 
 
 @dataclass(frozen=True)
@@ -177,11 +210,15 @@ def build_run_env(
     forum_dir: Path,
     device_contract: Path | None = None,
     worker_ids: list[str] | None = None,
+    role_map: dict[str, str] | None = None,
 ) -> dict[str, str]:
     """The env injected into one worker run: the swarm-only forum coordinates layered on top of
     the shared per-run pair (`DEVICE_CONTRACT` + `INSPECT_LOG_DIR`) via `agent_runner`. `FORUM_DIR`
     is the run-wide forum root (shared by every worker); `SWARM_ID` etc. are the swarm signal a
-    worker keys off. Kept minimal so a test can assert the injection exactly."""
+    worker keys off; `ROLE` is this worker's own role and `SWARM_ROSTER` the id→role map of every
+    peer (so the coordinator can direct the right worker — ticket 03). A device-less role
+    (`static`/`coordinator`) passes `device_contract=None`, so no `DEVICE_CONTRACT` is injected.
+    Kept minimal so a test can assert the injection exactly."""
     board_env = {
         ENV_FORUM_DIR: str(forum_dir),
         ENV_SWARM_ID: swarm_id,
@@ -190,6 +227,8 @@ def build_run_env(
     }
     if worker_ids:
         board_env[ENV_WORKER_IDS] = ",".join(worker_ids)
+    if role_map:
+        board_env[ENV_ROSTER] = ",".join(f"{aid}:{r}" for aid, r in sorted(role_map.items()))
     if device_contract is None:
         # A contract-less role (no device) still carries its log dir + the forum coordinates.
         return {ENV_INSPECT_LOG_DIR: str(log_dir), **board_env}
@@ -213,27 +252,34 @@ def build_run_argv(*, config: SwarmConfig, task: str) -> list[str]:
     )
 
 
-def evaluate_board(entries: list[dict[str, str]], worker_ids: list[str]) -> Verdict | None:
+def evaluate_board(entries: list[dict[str, str]], decider_ids: list[str]) -> Verdict | None:
     """One rubric pass over the board index. Returns a `Verdict` when the board is decisive, else
     None (keep waiting). **Self-report MVP** and the ticket-06 oracle seam: the first credible
-    `success` wins; the swarm loses once every worker has posted `giveup`. `success` is checked
-    before `giveup` so one worker's win beats another's surrender regardless of order.
+    `success` from a DECIDER wins; the swarm loses once every decider has posted `giveup`. `success`
+    is checked before `giveup` so one worker's win beats another's surrender regardless of order.
+
+    `decider_ids` are the workers whose posts decide the run — the `dynamic` (device-holding)
+    workers only (swarm-improvements ticket 03). A `static` worker feeds findings and a
+    `coordinator` directs, but neither confirms a bypass on a real device nor owns the verdict, so
+    a `success`/`giveup` from a non-decider is ignored here (the arbiter, not the coordinator,
+    decides — and a support worker cannot conclude the run for the whole swarm).
 
     Note the two vocabularies this bridges: the board's message *types* (`TYPE_SUCCESS`/
     `TYPE_GIVEUP`) drive the rubric, while the `Verdict` *value* (`SUCCESS`/`FAILURE`) is the
-    swarm outcome — a worker's `success` message yields a `SUCCESS` verdict."""
+    swarm outcome — a decider's `success` message yields a `SUCCESS` verdict."""
+    deciders = set(decider_ids)
     for e in entries:
-        if e.get("type") == TYPE_SUCCESS:
+        if e.get("type") == TYPE_SUCCESS and e.get("author") in deciders:
             return Verdict(SUCCESS, f"{e['author']} reported success ({e['id']})", trigger=e)
     givers = {e["author"] for e in entries if e.get("type") == TYPE_GIVEUP}
-    if worker_ids and set(worker_ids) <= givers:
-        return Verdict(FAILURE, f"all {len(worker_ids)} worker(s) gave up")
+    if deciders and deciders <= givers:
+        return Verdict(FAILURE, f"all {len(deciders)} device worker(s) gave up")
     return None
 
 
 def arbitrate(
     board: Board,
-    worker_ids: list[str],
+    decider_ids: list[str],
     *,
     budget: float,
     poll_interval: float,
@@ -241,11 +287,12 @@ def arbitrate(
     sleep: Callable[[float], None] = time.sleep,
 ) -> Verdict:
     """Watch the board until the rubric is decisive or the hard `budget` (wall-clock, seconds)
-    elapses. On the budget, the swarm loses (a hung/empty run never produces a verdict). `clock`
+    elapses. On the budget, the swarm loses (a hung/empty run never produces a verdict).
+    `decider_ids` are the verdict-deciding (`dynamic`) workers — see `evaluate_board`. `clock`
     and `sleep` are injected so a test drives it without real time."""
     deadline = clock() + budget
     while True:
-        verdict = evaluate_board(board.list(), worker_ids)
+        verdict = evaluate_board(board.list(), decider_ids)
         if verdict is not None:
             return verdict
         if clock() >= deadline:
@@ -311,20 +358,37 @@ class Conductor:
 
     def run(self) -> SwarmResult:
         cfg = self.config
-        if cfg.workers < 1:
+        # The per-role plan (ticket 03): the flattened role list is the source of truth for how
+        # many workers (of which roles) to launch. `worker-<i>` ids follow it in order, so the
+        # default homogeneous roster keeps the exact `worker-1..N` ids the single-role path had.
+        roles = cfg.worker_roles()
+        n = len(roles)
+        if n < 1:
             raise SwarmError("a swarm needs at least 1 worker")
         # Fail-fast over the cap (the broker enforces the hard cap too). Queueing is the deferred
         # alternative; failing loudly is the MVP so an over-provisioned run never half-acquires.
-        if cfg.workers > cfg.cap:
+        if n > cfg.cap:
             raise SwarmError(
-                f"{cfg.workers} workers exceed the device cap ({cfg.cap}) — reduce workers or "
+                f"{n} workers exceed the device cap ({cfg.cap}) — reduce workers or "
                 f"raise --cap (the broker still enforces its own hard cap)"
             )
 
         swarm_id = mint_swarm_id()
         log_dir = cfg.log_root / swarm_id
         log_dir.mkdir(parents=True, exist_ok=True)
-        worker_ids = [worker_agent_id(i) for i in range(1, cfg.workers + 1)]
+        worker_ids = [worker_agent_id(i) for i in range(1, n + 1)]
+        role_map = dict(zip(worker_ids, roles))  # id → role, the peer directory (injected as ROSTER)
+        # The verdict is decided by the DEVICE workers only (`dynamic`): they alone confirm a bypass
+        # on a real device. `static`/`coordinator` are support and never gate the arbiter's rubric.
+        decider_ids = [aid for aid, role in role_map.items() if role in DEVICE_ROLES]
+        if not decider_ids:
+            # No device worker → nothing can ever confirm the bypass, so the run could only idle to
+            # the budget. Fail fast (like the over-cap guard) rather than hang: a swarm needs at
+            # least one `dynamic` worker to decide the verdict.
+            raise SwarmError(
+                "a swarm needs at least one `dynamic` (device) worker to decide the verdict; the "
+                f"roster is device-less ({', '.join(sorted(set(roles)))})"
+            )
         # The forum lives under the run's own log dir (ticket 01): board + per-worker DM inboxes,
         # created up front so a worker's first DM has a home. No separate board root, no post-run
         # copy — the coordination record ships with the transcripts as one artifact.
@@ -336,12 +400,15 @@ class Conductor:
         handles: list[RunHandle] = []
         view_handle: ViewHandle | None = None  # the auto-started webview, stopped in the finally
         done_posted = False  # did the arbiter announce `done`? gates the cooperative-stop window
-        logger.info("swarm %s: %d worker(s), board=%s", swarm_id, cfg.workers, board.path)
+        logger.info("swarm %s: %d worker(s) [%s], board=%s", swarm_id, n,
+                    ", ".join(f"{a}:{r}" for a, r in role_map.items()), board.path)
         try:
-            # forum up → devices acquired (all, before any launch) → runs launched.
-            specs = self._acquire_and_plan(swarm_id, log_dir, forum.root, worker_ids, acquired)
+            # forum up → devices acquired (dynamic workers only, before any launch) → runs launched.
+            specs = self._acquire_and_plan(
+                swarm_id, log_dir, forum.root, worker_ids, role_map, acquired
+            )
             logger.info("swarm %s: acquired %d device(s): %s", swarm_id, len(acquired),
-                        ", ".join(acquired))
+                        ", ".join(acquired) or "—")
             # Append each handle as it is spawned (not a comprehension): if a later launch raises,
             # the already-spawned runs are still in `handles` for the `finally` to tear down — no
             # orphaned subprocess.
@@ -352,7 +419,7 @@ class Conductor:
             # arbitrate: wait for a verdict (or the budget), then announce it so workers stop.
             verdict = arbitrate(
                 board,
-                worker_ids,
+                decider_ids,
                 budget=cfg.budget,
                 poll_interval=cfg.poll_interval,
                 clock=self._clock,
@@ -371,36 +438,49 @@ class Conductor:
 
     def _acquire_and_plan(
         self, swarm_id: str, log_dir: Path, forum_dir: Path, worker_ids: list[str],
-        acquired: list[str],
+        role_map: dict[str, str], acquired: list[str],
     ) -> list[RunSpec]:
-        """Pre-acquire one device per worker (the dynamic role) and build each run's spec. Each
-        worker gets its OWN log dir `log_dir/<agent-id>/` (05c: restores the ADR-0002
-        `<swarm-id>/<agent-id>/` intent, so `inspect view --recursive` lists one distinguishable
-        entry per worker) — its `INSPECT_LOG_DIR`, the `<agent-id>.device` contract injected as
-        `DEVICE_CONTRACT`, and the `console.out` its stdout+stderr stream to (the live tail). The
-        serial is recorded in `acquired` *before* the next acquire, so a mid-way failure still
-        releases every device already granted (the caller's `finally`).
+        """Pre-acquire one device per DEVICE worker (`dynamic`) and build each run's spec. A
+        `static`/`coordinator` worker leases NO device (ticket 03) — it gets its spec with no
+        `DEVICE_CONTRACT`, and the broker is never touched on its behalf. Each worker gets its OWN
+        log dir `log_dir/<agent-id>/` (05c: restores the ADR-0002 `<swarm-id>/<agent-id>/` intent,
+        so `inspect view --recursive` lists one distinguishable entry per worker) — its
+        `INSPECT_LOG_DIR`, the `<agent-id>.device` contract injected as `DEVICE_CONTRACT` (dynamic
+        only), and the `console.out` its stdout+stderr stream to (the live tail). A device serial is
+        recorded in `acquired` *before* the next acquire, so a mid-way failure still releases every
+        device already granted (the caller's `finally`).
 
         Each `acquire` **blocks** while the broker cold-boots + provisions that device (up to its
         900s timeout), so a per-device heartbeat is logged before and after each one (05d) —
         otherwise the launcher looks hung for minutes with N workers."""
-        # Resolve the positional config once (an eval config or a legacy device yaml): which
-        # device each acquire leases and, when the config splits the APK out, which APK to install
-        # (`--target-apk`). The workers' `-T spec=` stays the positional itself (build_run_argv).
+        # Resolve the positional config once (an eval config): which device each `dynamic` acquire
+        # leases and, when the config splits the APK out, which APK to install (`--target-apk`). The
+        # workers' `-T spec=` stays the positional itself (build_run_argv). Role-agnostic here — the
+        # per-role mission is selected inside the worker run from its injected `ROLE`.
         target = load_target(self.config.spec)
         apk_args = target.env_up_args()
         specs: list[RunSpec] = []
-        total = len(worker_ids)
-        for i, agent_id in enumerate(worker_ids, start=1):
-            logger.info("swarm %s: acquiring device %d/%d (booting + provisioning)…",
-                        swarm_id, i, total)
-            started = self._clock()
-            contract = self._acquire(target.device_spec, *apk_args)
-            acquired.append(contract.serial)
-            logger.info("swarm %s: %s ← %s (%.0fs)",
-                        swarm_id, agent_id, contract.serial, self._clock() - started)
+        device_total = sum(1 for r in role_map.values() if r in DEVICE_ROLES)
+        device_i = 0
+        for agent_id in worker_ids:
+            role = role_map[agent_id]
             agent_log_dir = log_dir / agent_id
-            contract_path = agent_runner.write_contract(contract, agent_log_dir / f"{agent_id}.device")
+            contract_path: Path | None = None
+            if role in DEVICE_ROLES:
+                device_i += 1
+                logger.info("swarm %s: acquiring device %d/%d for %s (booting + provisioning)…",
+                            swarm_id, device_i, device_total, agent_id)
+                started = self._clock()
+                contract = self._acquire(target.device_spec, *apk_args)
+                acquired.append(contract.serial)
+                logger.info("swarm %s: %s ← %s (%.0fs)",
+                            swarm_id, agent_id, contract.serial, self._clock() - started)
+                contract_path = agent_runner.write_contract(
+                    contract, agent_log_dir / f"{agent_id}.device"
+                )
+            else:
+                logger.info("swarm %s: %s is device-less (%s) — no device leased",
+                            swarm_id, agent_id, role)
             specs.append(
                 RunSpec(
                     argv=build_run_argv(config=self.config, task=self.config.worker_task),
@@ -408,11 +488,12 @@ class Conductor:
                         config=self.config,
                         swarm_id=swarm_id,
                         agent_id=agent_id,
-                        role=ROLE_WORKER,
+                        role=role,
                         log_dir=agent_log_dir,
                         forum_dir=forum_dir,
                         device_contract=contract_path,
                         worker_ids=worker_ids,
+                        role_map=role_map,
                     ),
                     console_path=agent_log_dir / CONSOLE_FILENAME,
                 )

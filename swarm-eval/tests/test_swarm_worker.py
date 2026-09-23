@@ -15,8 +15,12 @@ from swarm_eval.conductor import (
     ENV_AGENT_ID,
     ENV_FORUM_DIR,
     ENV_ROLE,
+    ENV_ROSTER,
     ENV_SWARM_ID,
     ENV_WORKER_IDS,
+    ROLE_COORDINATOR,
+    ROLE_DYNAMIC,
+    ROLE_STATIC,
 )
 
 CONTRACT = Contract("emulator-5554", 5554, 5555, "writable-system")
@@ -43,7 +47,7 @@ def _state():
 def _clean_swarm_env(monkeypatch):
     # keep every test starting from single mode unless it opts into the forum coordinates
     for var in (ENV_DEVICE_CONTRACT, ENV_SWARM_ID, ENV_AGENT_ID, ENV_ROLE, ENV_WORKER_IDS,
-                ENV_FORUM_DIR):
+                ENV_ROSTER, ENV_FORUM_DIR):
         monkeypatch.delenv(var, raising=False)
 
 
@@ -115,12 +119,12 @@ def test_task_swarm_mode_wraps_prompt_and_stamps_metadata(monkeypatch, tmp_path)
     monkeypatch.setenv(ENV_DEVICE_CONTRACT, str(tmp_path / "worker-1.device"))
     monkeypatch.setenv(ENV_SWARM_ID, "swarm-abc")
     monkeypatch.setenv(ENV_AGENT_ID, "worker-1")
-    monkeypatch.setenv(ENV_ROLE, "worker")
+    monkeypatch.setenv(ENV_ROLE, ROLE_DYNAMIC)
     monkeypatch.setenv(ENV_WORKER_IDS, "worker-1,worker-2")
     monkeypatch.setenv(ENV_FORUM_DIR, str(tmp_path / "forum"))  # a swarm worker always has one
 
     t = da.dynamic_agent()
-    assert t.metadata == {"swarm_id": "swarm-abc", "agent_id": "worker-1", "role": "worker"}
+    assert t.metadata == {"swarm_id": "swarm-abc", "agent_id": "worker-1", "role": ROLE_DYNAMIC}
     prompt = t.dataset[0].input
     assert "Collaboration protocol" in prompt
     assert "worker-2" in prompt  # peer named
@@ -140,3 +144,64 @@ def test_task_swarm_mode_honours_spec_selected_target(monkeypatch, tmp_path):
     assert "HealthHub" in prompt and "RASP Target" not in prompt
     assert "Collaboration protocol" in prompt  # still wrapped for the swarm
     assert "/root/base.apk" in t.dataset[0].files
+
+
+# ---- swarm-improvements ticket 03: the device-less roles ------------------------------------
+
+def _swarm_env(monkeypatch, tmp_path, *, role, agent_id, roster):
+    monkeypatch.setenv(ENV_SWARM_ID, "swarm-abc")
+    monkeypatch.setenv(ENV_AGENT_ID, agent_id)
+    monkeypatch.setenv(ENV_ROLE, role)
+    monkeypatch.setenv(ENV_WORKER_IDS, ",".join(roster))
+    monkeypatch.setenv(ENV_ROSTER, ",".join(f"{a}:{r}" for a, r in roster.items()))
+    monkeypatch.setenv(ENV_FORUM_DIR, str(tmp_path / "forum"))
+
+
+def test_static_worker_task_is_device_less(monkeypatch, tmp_path):
+    # A `static` worker gets NO device: no DEVICE_CONTRACT is injected, so the task has no device
+    # setup solver and its mission carries the static-analysis brief, not the device manual.
+    _swarm_env(monkeypatch, tmp_path, role=ROLE_STATIC, agent_id="worker-3",
+               roster={"worker-1": "dynamic", "worker-3": "static"})
+    t = da.dynamic_agent()
+    assert t.setup is None  # no inject_device — nothing fails fast on the absent contract
+    assert t.metadata["role"] == ROLE_STATIC
+    mission = t.dataset[0].input
+    assert "STATIC-ANALYSIS" in mission and "NO device" in mission
+    assert "connect-device.sh" not in mission          # the device manual is absent
+    assert "Collaboration protocol" in mission          # still a forum worker
+
+
+def test_coordinator_worker_task_is_device_less_and_names_peers(monkeypatch, tmp_path):
+    roster = {"worker-1": "dynamic", "worker-2": "static", "worker-3": "coordinator"}
+    _swarm_env(monkeypatch, tmp_path, role=ROLE_COORDINATOR, agent_id="worker-3", roster=roster)
+    t = da.dynamic_agent()
+    assert t.setup is None
+    assert t.metadata["role"] == ROLE_COORDINATOR
+    mission = t.dataset[0].input
+    # the injected SWARM_ROSTER is parsed into the coordinator's peer directory.
+    assert "worker-1 (dynamic)" in mission and "worker-2 (static)" in mission
+    assert "cannot post `done`" in mission
+
+
+def test_dynamic_worker_task_keeps_the_device_setup(monkeypatch, tmp_path):
+    # The `dynamic` role is unchanged: a contract is injected and the device setup solver runs.
+    monkeypatch.setenv(ENV_DEVICE_CONTRACT, str(tmp_path / "worker-1.device"))
+    _swarm_env(monkeypatch, tmp_path, role=ROLE_DYNAMIC, agent_id="worker-1",
+               roster={"worker-1": "dynamic"})
+    t = da.dynamic_agent()
+    assert t.setup is not None  # inject_device runs for a device worker
+    assert t.metadata["role"] == ROLE_DYNAMIC
+    assert "connect-device.sh" in t.dataset[0].input  # the device manual is present
+
+
+def test_parse_roster_decodes_id_role_pairs():
+    assert da.parse_roster("worker-1:dynamic,worker-3:static") == {
+        "worker-1": "dynamic", "worker-3": "static"
+    }
+    assert da.parse_roster("") == {}
+    assert da.parse_roster("garbage") == {}  # no ':' → skipped, not a crash
+
+
+def test_worker_role_defaults_to_dynamic(monkeypatch):
+    monkeypatch.delenv(ENV_ROLE, raising=False)
+    assert da.worker_role() == ROLE_DYNAMIC

@@ -1,0 +1,36 @@
+# Eval config (swarm-improvements ticket 03): the rasp_dummy target run by a MIXED-ROLE swarm —
+# the demonstrator for the three worker roles. Same app + device as configs/evals/rasp_dummy.yaml;
+# this one carries a heterogeneous roster so a single launch fields device workers, a static
+# analyst, and a coordinator at once:
+#   python swarm.py configs/evals/rasp_dummy_swarm.yaml      # 4 workers, roster below
+# Only the `dynamic` workers lease a broker device; `static` and `coordinator` are device-less. A
+# CLI --workers still overrides the roster with N homogeneous `dynamic` workers (CLI > config).
+
+app: rasp_dummy         # -> configs/apps/rasp_dummy.yaml  (owns target_apk + the mission slots)
+device: pixel          # -> configs/devices/pixel.yaml  (shared provisioning-only emulator)
+
+# The worker roster: a list of {role, count}. Each role names configs/workers/<role>.yaml (role is
+# selected by FILENAME — no `kind` field). Total workers = sum of counts (here 4). Device leasing is
+# gated on role: only the 2 `dynamic` workers get an emulator; `static`/`coordinator` get none.
+workers:
+  - role: dynamic       # -> configs/workers/dynamic.yaml   (leases a device; drives the bypass)
+    count: 2
+  - role: static        # -> configs/workers/static.yaml    (device-less; decompiles, posts findings)
+    count: 1
+  - role: coordinator   # -> configs/workers/coordinator.yaml (device-less; directs the others)
+    count: 1
+
+# The served provider model the sandboxed Claude Code proxies to (the sweep lever). --model wins.
+model: anthropic/claude-sonnet-4-5-20250929
+
+# Caps / budget / limits (all optional; each overridable by the matching CLI flag). cap must be at
+# least the roster total (4) or the launcher fails fast before acquiring.
+limits:
+  time_limit: 1800      # per-run Inspect --time-limit (s)
+  budget: 3600          # swarm launcher hard wall-clock (s)
+  cap: 6                # max workers before fail-fast
+
+# Device-setting override whitelist (only writable_system + headless; eval > device > default).
+# Left unset, so this run uses the device file's values.
+#   writable_system: true
+#   headless: true

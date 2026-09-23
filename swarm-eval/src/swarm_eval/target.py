@@ -272,10 +272,18 @@ def _target_from_app(
     )
 
 
-def _load_eval_config(root: Path, spec_path: str, data: dict[str, Any]) -> TargetConfig:
+def _load_eval_config(
+    root: Path, spec_path: str, data: dict[str, Any], *, role: str | None = None
+) -> TargetConfig:
     """The new (ticket 02) shape: an eval config referencing an app + a device (+ a worker role).
     The app file owns `target_apk` and the mission slots; the device file is provisioning-only,
-    so the broker is handed the device spec AND the APK explicitly (`broker_apk`)."""
+    so the broker is handed the device spec AND the APK explicitly (`broker_apk`).
+
+    `role` selects WHICH worker role's notes open the mission (swarm-improvements ticket 03): a
+    swarm worker loads the target for ITS own role (`dynamic`/`static`/`coordinator`), so the
+    static/coordinator worker gets its own role notes rather than the first role's. Left `None`
+    (the host-side/device-lease path, which is role-agnostic), the notes come from the FIRST role
+    the eval names — the pre-ticket-03 behaviour."""
     device_path = _resolve_ref(root, "devices", str(data["device"]))
     if not device_path.is_file():
         raise ValueError(f"{spec_path}: eval config `device` -> no device file at {device_path}")
@@ -289,16 +297,25 @@ def _load_eval_config(root: Path, spec_path: str, data: dict[str, Any]) -> Targe
     app: dict[str, Any] = yaml.safe_load(app_path.read_text(encoding="utf-8")) or {}
 
     # Resolve + validate every worker role the eval references (a typo'd `workers:` fails as loudly
-    # as a bad `app:`/`device:`). The mission's worker-role notes come from the FIRST role (ticket
-    # 03 ships one role, `dynamic`); a future per-role mission is a later ticket.
+    # as a bad `app:`/`device:`). The mission's worker-role notes come from `role` when a specific
+    # one is requested (a swarm worker loading its OWN role — swarm-improvements ticket 03), else
+    # from the FIRST role the eval names (the role-agnostic host-side/single path).
     roles = _worker_roles(data.get("workers"))
     role_paths: list[Path] = []
-    for role in roles:
-        wp = _resolve_ref(root, "workers", role)
+    for r in roles:
+        wp = _resolve_ref(root, "workers", r)
         if not wp.is_file():
             raise ValueError(f"{spec_path}: eval config `workers` -> no worker file at {wp}")
         role_paths.append(wp)
-    worker_notes = _read_notes(role_paths[0]) if role_paths else None
+    if role is not None:
+        # A worker loads its own role's notes; the role file must exist (the conductor only
+        # launches a role it resolved, so this doubles as a guard against a stale env).
+        role_path = _resolve_ref(root, "workers", role)
+        if not role_path.is_file():
+            raise ValueError(f"{spec_path}: worker role {role!r} -> no worker file at {role_path}")
+        worker_notes = _read_notes(role_path)
+    else:
+        worker_notes = _read_notes(role_paths[0]) if role_paths else None
 
     target_apk = app.get("target_apk")
     if not target_apk:
@@ -345,10 +362,14 @@ def _read_eval_config(spec: str | Path) -> tuple[Path, str, dict[str, Any]]:
     return root, spec_path, data
 
 
-def load_target(spec: str | Path) -> TargetConfig:
-    """Read one positional eval config (`configs/evals/<name>.yaml`) into a `TargetConfig`."""
+def load_target(spec: str | Path, *, role: str | None = None) -> TargetConfig:
+    """Read one positional eval config (`configs/evals/<name>.yaml`) into a `TargetConfig`. `role`
+    (swarm-improvements ticket 03) selects which worker role's notes open the mission — a swarm
+    worker passes its own role so a `static`/`coordinator` worker gets its role mission, not the
+    first role's; `None` keeps the first-role/role-agnostic behaviour (the device-lease + single
+    paths)."""
     root, spec_path, data = _read_eval_config(spec)
-    return _load_eval_config(root, spec_path, data)
+    return _load_eval_config(root, spec_path, data, role=role)
 
 
 # ---- yaml-config ticket 03: run knobs folded into the eval config --------------------------

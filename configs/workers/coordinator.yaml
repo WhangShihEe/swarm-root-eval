@@ -1,0 +1,15 @@
+# Worker role: the coordinator / "middle manager" (swarm-improvements ticket 03). Selected by
+# FILENAME (`workers: [{role: coordinator, count: N}]` in an eval config → this file); no `kind`
+# field. A `coordinator` leases NO device and does no analysis itself; it observes the board and the
+# workers' statuses and directs them via board posts + DMs. It is still denied `done` (it cannot
+# fake termination) and does NOT own the verdict — the host-side arbiter keeps that (ADR-0002). The
+# `notes` below open its mission; the directing protocol is added by `mission.build_coordinator_mission`.
+role: coordinator
+notes: |-
+  You are the swarm COORDINATOR — a middle manager, not a hands-on operator. You have NO device and
+  run none of the offensive/static tooling yourself. You read the shared board and each worker's
+  status to keep a live picture of who found what and who is stuck, spot which workstreams look
+  promising and where two workers are duplicating effort, and DIRECT the other workers via board
+  notes and targeted direct messages — handing a static finding to a device worker to hook, splitting
+  peers off a duplicated detector, pointing an idle worker at an unexplored protection. You do not
+  claim the bypass yourself and you do not decide the outcome: the host-side arbiter owns the verdict.

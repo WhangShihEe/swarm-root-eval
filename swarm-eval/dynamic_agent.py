@@ -41,9 +41,21 @@ from inspect_swe import claude_code
 from swarm_eval.agent_runner import DEFAULT_TIME_LIMIT, ENV_DEVICE_CONTRACT
 from swarm_eval.board_tools import ENV_AGENT_ID, forum_tools_spec
 from swarm_eval.broker_client import DEFAULT_SPEC, parse_contract
-from swarm_eval.conductor import ENV_ROLE, ENV_WORKER_IDS, ROLE_WORKER
+from swarm_eval.conductor import (
+    ENV_ROLE,
+    ENV_ROSTER,
+    ENV_WORKER_IDS,
+    ROLE_COORDINATOR,
+    ROLE_DYNAMIC,
+    ROLE_STATIC,
+)
 from swarm_eval.messageboard import ENV_SWARM_ID  # its canonical home (conductor re-uses it)
-from swarm_eval.mission import build_mission, extract_self_report
+from swarm_eval.mission import (
+    build_coordinator_mission,
+    build_mission,
+    build_static_mission,
+    extract_self_report,
+)
 from swarm_eval.model_filters import make_swarm_turn_filter, sweep_generate_filter
 from swarm_eval.target import TargetConfig, load_target
 
@@ -72,6 +84,25 @@ def swarm_mode() -> bool:
     coordinates (`SWARM_ID`) on top of the always-present device contract. A single run (a
     contract, no board env) returns False and gets the bare mission with no board tools."""
     return bool(os.environ.get(ENV_SWARM_ID))
+
+
+def worker_role() -> str:
+    """This run's role (swarm-improvements ticket 03), from the injected `ROLE` — `dynamic`,
+    `static`, or `coordinator`. Defaults to `dynamic` when unset: a single run (`single_agent.py`)
+    always leases a device, and an unknown/absent role gets the device-holding mission."""
+    return os.environ.get(ENV_ROLE) or ROLE_DYNAMIC
+
+
+def parse_roster(raw: str) -> dict[str, str]:
+    """Decode the injected `SWARM_ROSTER` (`worker-1:dynamic,worker-3:static,…`) into an id→role
+    map — the peer directory the coordinator's mission names so it can direct the right worker. A
+    malformed or empty value yields `{}` (a run with no roster injected just gets no directory)."""
+    roster: dict[str, str] = {}
+    for pair in raw.split(","):
+        aid, sep, role = pair.partition(":")
+        if sep and aid.strip():
+            roster[aid.strip()] = role.strip()
+    return roster
 
 
 @solver
@@ -139,9 +170,10 @@ def swarm_prompt(base_mission: str, agent_id: str, worker_ids: list[str]) -> str
         f"You are agent **{agent_id}**, one of {max(len(worker_ids), 1)} worker agent(s) "
         f"({peers}) collaborating on the mission below through a shared forum (an MCP server "
         f"named `board`). Broadcast tools: `post_message(subject, content, type)`, "
-        f"`list_messages(since)`, `read_message(ids)`. Direct-message tools: "
+        f"`list_messages(since)`, `read_message(ids)`. Direct-message + status tools: "
         f"`send_dm(to, subject, content, type)` to reach one peer, `read_inbox(since)` to read "
-        f"messages sent to you, `set_status(status)` to tell peers what you are working on. Your "
+        f"messages sent to you, `set_status(status)` to tell peers what you are working on, "
+        f"`read_statuses()` to see every peer's current status. Your "
         f"author identity is stamped automatically. Coordinate with your peers — don't duplicate "
         f"their work."
     )
@@ -169,16 +201,36 @@ def swarm_prompt(base_mission: str, agent_id: str, worker_ids: list[str]) -> str
 # same value the launchers pass as `--time-limit`), sourced from one place so the two can't drift.
 
 
-def build_dynamic_task(target: TargetConfig, *, time_limit: int = DEFAULT_TIME_LIMIT) -> Task:
-    """Build the dynamic-agent Task for one resolved `TargetConfig`, in whichever mode the env
-    selects (see the module docstring). Swarm mode additionally wires the shared-board tools +
-    collaboration prompt and stamps the run's swarm/agent/role identity into the eval metadata so
-    `logs/<swarm-id>/` correlates per run. This shared builder is the one agent unit both
-    entrypoints spawn — 1× by `single_agent`, N× by the conductor (ticket 03).
+def _role_mission_and_setup(
+    target: TargetConfig, role: str, roster: dict[str, str]
+) -> tuple[str, Solver | None]:
+    """The (mission, setup-solver) for a worker's role (swarm-improvements ticket 03). `dynamic`
+    gets the device+tools mission and the `inject_device` setup (it leases a device); `static` and
+    `coordinator` are DEVICE-LESS — a device-free mission and NO device setup (so nothing fails
+    fast on the absent contract the conductor never injects for them)."""
+    if role == ROLE_STATIC:
+        return build_static_mission(target), None
+    if role == ROLE_COORDINATOR:
+        return build_coordinator_mission(target, roster), None
+    # dynamic (or an unknown role): the device-holding mission + device setup.
+    return build_mission(target, contract_path=CONTRACT_PATH), inject_device()
+
+
+def build_dynamic_task(
+    target: TargetConfig, *, time_limit: int = DEFAULT_TIME_LIMIT, role: str = ROLE_DYNAMIC
+) -> Task:
+    """Build the agent Task for one resolved `TargetConfig` and `role`, in whichever mode the env
+    selects (see the module docstring). The role (ticket 03) picks the mission and whether a device
+    is set up: `dynamic` drives a leased device, `static`/`coordinator` are device-less. Swarm mode
+    additionally wires the shared-board tools + collaboration prompt and stamps the run's
+    swarm/agent/role identity into the eval metadata so `logs/<swarm-id>/` correlates per run. This
+    shared builder is the one agent unit both entrypoints spawn — 1× by `single_agent` (always
+    `dynamic`), N× by the conductor across the roster.
 
     Everything app-specific comes from `target`: the mission text, the staged APK file-set, and
     the device spec the broker acquires. Nothing here is app- or APK-specific."""
-    mission = build_mission(target, contract_path=CONTRACT_PATH)
+    roster = parse_roster(os.environ.get(ENV_ROSTER, ""))
+    mission, setup = _role_mission_and_setup(target, role, roster)
     solver_kwargs = dict(
         # version="sandbox": use the CC binary + toolchain baked into this image and fail loud
         # rather than downloading CC at runtime (now that the sandbox has host network, a silent
@@ -193,20 +245,23 @@ def build_dynamic_task(target: TargetConfig, *, time_limit: int = DEFAULT_TIME_L
         worker_ids = [w for w in os.environ.get(ENV_WORKER_IDS, "").split(",") if w]
         mission = swarm_prompt(mission, agent_id, worker_ids)
         # Workers get the full forum toolset (board + DM/status); `done` stays reserved for the
-        # arbiter (ticket 01). The turn-filter pushes this worker's unread DMs into each turn
-        # (over the shared model-sweep hygiene the single path uses).
+        # arbiter (ticket 01) — the coordinator is a worker here, so it too is denied `done`. The
+        # turn-filter pushes this worker's unread DMs into each turn (over the shared model-sweep
+        # hygiene the single path uses).
         solver_kwargs["bridged_tools"] = [forum_tools_spec(allow_done=False)]
         solver_kwargs["filter"] = make_swarm_turn_filter(agent_id)
         metadata = {
             "swarm_id": os.environ.get(ENV_SWARM_ID, ""),
             "agent_id": agent_id,
-            "role": os.environ.get(ENV_ROLE, ROLE_WORKER),
+            "role": role,
         }
     return Task(
         dataset=MemoryDataset([
             Sample(input=mission, target="SUCCESS", files=dict(target.files))
         ]),
-        setup=inject_device(),
+        # `dynamic` stages + connects the leased device; `static`/`coordinator` have no device, so
+        # no setup solver runs (the conductor injects no contract for them).
+        setup=setup,
         solver=claude_code(**solver_kwargs),
         scorer=self_report(),
         # Fail-fast: bound the sample (wall-clock, so a silent stall trips it too) so a hung/empty
@@ -223,7 +278,10 @@ def build_dynamic_task(target: TargetConfig, *, time_limit: int = DEFAULT_TIME_L
 
 @task
 def dynamic_agent(spec: str = DEFAULT_SPEC, time_limit: int = DEFAULT_TIME_LIMIT):
-    """The dynamic-agent `@task`: select the target purely from its eval config
-    (`-T spec=configs/evals/<name>.yaml`, default the RASP toy) and build the run. rasp, healthhub, and
-    any future APK run through this one code path — the only difference is the yaml."""
-    return build_dynamic_task(load_target(spec), time_limit=time_limit)
+    """The agent `@task`: select the target purely from its eval config
+    (`-T spec=configs/evals/<name>.yaml`, default the RASP toy) and build the run for this worker's
+    injected `ROLE` (swarm-improvements ticket 03; `dynamic` for a single run). The mission opens
+    with this role's own worker notes (`load_target(..., role=)`). rasp, healthhub, and any future
+    APK run through this one code path — the only difference is the yaml and the role."""
+    role = worker_role()
+    return build_dynamic_task(load_target(spec, role=role), time_limit=time_limit, role=role)

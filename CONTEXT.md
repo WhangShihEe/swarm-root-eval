@@ -28,9 +28,16 @@ the term as defined here; don't drift to synonyms. Decisions that shaped these l
   Inspect run (one run = one bridge = one clean transcript). **N=1-is-single** — one run, a
   one-participant board.
 - **Static agent** — has the APK and static tools (jadx / apktool); no emulator. Cheap,
-  effectively unbounded in count.
+  effectively unbounded in count. A swarm **role** selected by filename (`configs/workers/static.yaml`);
+  it posts its findings to the board for the dynamic agents to act on.
 - **Dynamic agent** — static tools **plus** a broker-granted emulator and frida. Scarce,
-  gated by the broker.
+  gated by the broker (`configs/workers/dynamic.yaml`). Only dynamic agents decide the verdict —
+  they alone confirm a bypass on a real device.
+- **Coordinator** — a device-less swarm **role** (`configs/workers/coordinator.yaml`): a "middle
+  manager" that reads the board + every peer's status and directs the other agents via board posts
+  and DMs. It is **not** the rejected central orchestrator of ADR-0002 (it spawns nothing, owns no
+  run's lifecycle) — it is one more peer whose only leverage is advice; it is denied the `done`
+  message and excluded from the verdict, so the host-side **arbiter** still owns termination.
 
 ## Device layer (the harness)
 

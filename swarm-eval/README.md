@@ -91,10 +91,25 @@ without spamming the channel:
   the reusable "turn-injection plumbing"): each turn it appends this worker's DMs-since-last as a
   fresh top-priority user message and advances a cursor so each DM is delivered exactly once.
 
-> **`<WIP>`** — swarm-improvements: **board adoption** (push the unread board index into every turn,
-> ranked below DMs; ticket 02), **roles** (`static`/`coordinator` device-less workers, the
-> coordinator being the heaviest DM user; ticket 03), a **post-run report** over the forum (ticket
-> 04), and a **bespoke live/review forum UI** (ticket 05).
+**Worker roles** (swarm-improvements ticket 03) — a run's `workers:` roster mixes three roles,
+each selected purely by a `configs/workers/<role>.yaml` filename (no `kind` field), and the
+conductor leases a broker device **only for `dynamic`** workers:
+
+- **`dynamic`** — the device worker: a leased, rooted emulator + the full offensive toolchain, it
+  drives the runtime bypass. Only `dynamic` workers decide the verdict (they alone confirm a bypass
+  on a real device).
+- **`static`** — device-less: only the sandbox with the APK staged. It runs a static-analysis
+  mission (deep decompilation) and posts `finding`s to the board for the device workers to hook.
+- **`coordinator`** — device-less "middle manager": it reads the board + peer statuses and directs
+  the others via board posts and DMs. It is denied `done` and does **not** own the verdict (the
+  host-side arbiter keeps that, ADR-0002). Its id→role peer directory rides in `SWARM_ROSTER`.
+
+A mixed run: `python swarm.py configs/evals/rasp_dummy_swarm.yaml` (2 `dynamic` + 1 `static` + 1
+`coordinator`; only the 2 `dynamic` lease a device). `--workers N` overrides the roster with N
+homogeneous `dynamic` workers (the swarm-size sweep lever).
+
+> **`<WIP>`** — swarm-improvements: a **post-run report** over the forum (ticket 04), and a
+> **bespoke live/review forum UI** (ticket 05).
 
 The arbiter is a **host-side rubric** (`evaluate_board`), not a separate bridged run — a
 deliberate simplification: an LLM can't be trusted to honor a wall-clock budget, and the verdict

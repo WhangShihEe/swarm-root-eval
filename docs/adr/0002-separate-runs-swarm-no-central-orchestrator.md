@@ -38,7 +38,10 @@ swarm layer (launcher, board, arbiter, cross-run scoring) lives **outside** Insp
 - **Clean per-agent transcripts**; per-worker observability restored.
 - **No central orchestrator**; coordination is peer collaboration via the board (stigmergy),
   with a dedicated arbiter for termination/verdict. `N=1-is-single` still holds (one run,
-  one-participant board).
+  one-participant board). (The later `coordinator` role — swarm-improvements ticket 03 — does
+  **not** reverse this: it is one more separate peer run that only *advises* via the board/DMs; it
+  spawns no one, owns no run's lifecycle, is denied `done`, and is excluded from the verdict, so
+  the arbiter still owns termination. It is not the rejected Fork-A orchestrator.)
 - **More machinery outside Inspect** — a standing messageboard + a launcher/collator, siblings
   to the broker — and **swarm success must be computed externally** (no native Inspect fold of N
   runs into one predicate).

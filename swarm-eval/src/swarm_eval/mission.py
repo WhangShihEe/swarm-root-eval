@@ -101,7 +101,14 @@ Tools baked into this sandbox (this is the exact set — nothing else is install
   - `objection` — the fast path (its bundled agent already carries the bridge, so it works on
     frida 17). Non-interactive form (feed EOF so it doesn't hang on the REPL):
     `echo exit | objection -g <package> explore --startup-command "android root disable"`.
-  STATIC (inspect the APK — all arch-agnostic here):
+{_static_tools_block()}"""
+
+
+def _static_tools_block() -> str:
+    """The STATIC half of the baked toolchain — APK inspection only, no device. Shared by the
+    dynamic mission (which pairs it with the device/dynamic tools) and the device-less `static`
+    role mission (which has ONLY this). Renders byte-identically wherever it appears."""
+    return """  STATIC (inspect the APK — all arch-agnostic here):
   - `jadx` (Java decompile: `jadx -d out <apk>`), `apktool` (smali + resources + decoded
     manifest: `apktool d <apk>`), `androguard` (manifest/metadata, e.g.
     `androguard axml <apk>`), plus `file`, `strings`, `unzip`.
@@ -140,6 +147,87 @@ def build_mission(target: TargetConfig, *, contract_path: str) -> str:
         _device_and_tools(contract_path),
         _confirm_line(target),
         _verdict_block(),
+    ])
+
+
+def _device_less_tools() -> str:
+    """The device-less `static` role's operating manual: it has NO emulator, only the APK-inspection
+    toolchain (`_static_tools_block`). Frames the assignment so the agent doesn't waste turns trying
+    to reach a device that was never leased to it (swarm-improvements ticket 03)."""
+    return (
+        "You have NO device on this assignment — you are the swarm's STATIC-ANALYSIS specialist. "
+        "Do not run `adb`, `frida`, or `objection` (no emulator was leased to you); work the "
+        "staged APK(s) purely offline. Tools baked into this sandbox for you:\n\n"
+        f"{_static_tools_block()}"
+    )
+
+
+def _static_deliverable() -> str:
+    """The `static` role's closing contract: its deliverable is intel ON THE BOARD, not a device
+    confirmation it cannot make. It posts `finding` messages so the dynamic workers build hooks
+    off them; the verdict line keeps the transcript uniform, but the swarm verdict is decided from
+    the dynamic workers' device-confirmed results, not this worker's self-report."""
+    return (
+        "Your deliverable is INTELLIGENCE FOR THE SWARM, posted to the board — not a runtime "
+        "bypass (you have no device to confirm one on). As you decompile:\n"
+        "- Post a `finding` for every protection you map: the exact detector class + method names, "
+        "the string/asset constants they check, any native library (`lib*.so`) doing the check, "
+        "and any obfuscation or integrity/signature check a dynamic worker must expect. Be "
+        "specific enough that a peer can hook it without re-deriving it.\n"
+        "- Keep a short `set_status` reflecting what you are decompiling now.\n\n"
+        "When you have thoroughly mapped the protections and posted your findings, write EXACTLY "
+        f"ONE final line `{VERDICT_TOKEN}: FAILURE` (you did not personally confirm a bypass — the "
+        "dynamic workers do that from your intel), then a short summary of what you found and where."
+    )
+
+
+def build_static_mission(target: TargetConfig) -> str:
+    """The device-less `static` worker mission (swarm-improvements ticket 03): the app briefing
+    (opened by the `static` role's own notes), the static-only toolchain, and the board-findings
+    deliverable. No device/contract, no dynamic tools — a `static` worker leases no device."""
+    return "\n\n".join([
+        _briefing(target),
+        _device_less_tools(),
+        _confirm_line(target),
+        _static_deliverable(),
+    ])
+
+
+def build_coordinator_mission(target: TargetConfig, roster: dict[str, str]) -> str:
+    """The device-less `coordinator` worker mission (swarm-improvements ticket 03): a "middle
+    manager" that observes the board + peer statuses and DIRECTS the other workers, but does no
+    analysis/exploitation itself and neither confirms the objective nor decides the verdict (the
+    host-side arbiter keeps that; the coordinator is denied `done`). `roster` maps each peer's
+    agent id to its role so the coordinator can direct the right worker (e.g. hand a `static`
+    finding to a `dynamic` worker to hook)."""
+    peers = "; ".join(f"{aid} ({role})" for aid, role in sorted(roster.items())) or "(none)"
+    directing = (
+        "You are the swarm's COORDINATOR — a middle manager, NOT a hands-on operator. You have no "
+        "device and you do not run the offensive/static toolchain yourself. Your team:\n"
+        f"  {peers}\n\n"
+        "Your job is to make the swarm greater than the sum of its workers:\n"
+        "- Read the board (`list_messages`/`read_message`) and call `read_statuses()` frequently to "
+        "keep a live picture of who found what and who is stuck (that tool shows every peer's "
+        "current status, not just your own).\n"
+        "- Spot the promising workstreams, the dead ends, and any two workers duplicating each "
+        "other. Post a short board `note` summarising the state and the plan so everyone shares it.\n"
+        "- DIRECT specific workers with `send_dm`: hand a `static` worker's finding to a `dynamic` "
+        "worker to hook; split two workers off a duplicated detector; point an idle worker at an "
+        "unexplored protection. Targeted DMs over broadcast spam.\n"
+        "- Do NOT do the decompilation or write the hooks yourself, and do NOT claim the bypass — "
+        "you neither confirm the objective nor own the verdict. You cannot post `done` (the arbiter "
+        "posts it); when a `done` message appears, the run is decided — stop and write your final line."
+    )
+    closing = (
+        f"Write EXACTLY ONE final line `{VERDICT_TOKEN}: FAILURE` when you stop (you are the "
+        "coordinator — you do not personally achieve the bypass), then a short summary of how you "
+        "steered the swarm and which leads paid off."
+    )
+    return "\n\n".join([
+        _briefing(target),
+        directing,
+        _confirm_line(target),
+        closing,
     ])
 
 

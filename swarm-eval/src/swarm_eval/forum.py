@@ -125,6 +125,17 @@ class Forum:
         path = self._inbox_path(worker_id) / STATUS_FILENAME
         return path.read_text(encoding="utf-8") if path.exists() else None
 
+    def statuses(self, worker_ids: Iterable[str] | None = None) -> dict[str, str | None]:
+        """Every worker's current status as `{worker_id: status|None}` — the peer-visibility read a
+        coordinator (swarm-improvements ticket 03) relies on to see who is doing what. With
+        `worker_ids` (the injected roster), reports exactly those in order (a worker that has set no
+        status maps to None); without, discovers them from the existing inbox dirs under
+        `forum/dms/`. Unlike `get_status` (one worker, self), this reads across peers."""
+        if worker_ids is None:
+            dms = self.root / DMS_DIRNAME
+            worker_ids = sorted(p.name for p in dms.iterdir() if p.is_dir()) if dms.exists() else []
+        return {wid: self.get_status(wid) for wid in worker_ids}
+
     # ---- lifecycle --------------------------------------------------------------------------
 
     def ensure(self, worker_ids: Iterable[str] = ()) -> None:

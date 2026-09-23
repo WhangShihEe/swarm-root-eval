@@ -132,3 +132,42 @@ def test_eval_config_without_run_knobs_falls_back_to_built_in_defaults(tmp_path)
     assert config.model == cli.DEFAULT_MODEL
     assert config.budget == cli.DEFAULT_BUDGET
     assert config.cap == cli.DEFAULT_CAP
+
+
+# ---- swarm-improvements ticket 03: the per-role roster --------------------------------------
+
+from swarm_eval.conductor import ROLE_COORDINATOR, ROLE_DYNAMIC, ROLE_STATIC  # noqa: E402
+from swarm_eval.target import WorkerRequest  # noqa: E402
+
+_MIXED = (
+    "app: rasp_dummy\ndevice: pixel\n"
+    "workers:\n"
+    "  - role: dynamic\n    count: 2\n"
+    "  - role: static\n    count: 1\n"
+    "  - role: coordinator\n    count: 1\n"
+)
+
+
+def test_build_config_threads_the_mixed_role_roster(tmp_path):
+    ev = tmp_path / "mixed.yaml"
+    ev.write_text(_MIXED, encoding="utf-8")
+    config = cli.build_config(cli.parse_args([str(ev)]))
+    assert config.roster == (
+        WorkerRequest(ROLE_DYNAMIC, 2),
+        WorkerRequest(ROLE_STATIC, 1),
+        WorkerRequest(ROLE_COORDINATOR, 1),
+    )
+    assert config.workers == 4  # the roster sum
+    # and the conductor flattens it in order.
+    assert config.worker_roles() == [ROLE_DYNAMIC, ROLE_DYNAMIC, ROLE_STATIC, ROLE_COORDINATOR]
+
+
+def test_cli_workers_override_replaces_the_roster_with_homogeneous_dynamic(tmp_path):
+    # --workers is the swarm-size sweep lever: a given count overrides the eval's mixed roster with
+    # N dynamic workers (an empty roster resolves to N dynamic).
+    ev = tmp_path / "mixed.yaml"
+    ev.write_text(_MIXED, encoding="utf-8")
+    config = cli.build_config(cli.parse_args([str(ev), "--workers", "5"]))
+    assert config.roster == ()
+    assert config.workers == 5
+    assert config.worker_roles() == [ROLE_DYNAMIC] * 5

@@ -141,12 +141,37 @@ async def test_set_status_overwrites(env):
     assert env.get_status("worker-1") == "second"
 
 
+# ---- read_statuses (ticket 03: peer-visibility, the coordinator's status read) --------------
+
+async def test_read_statuses_returns_every_peers_status(env, monkeypatch):
+    # A coordinator needs to see the WHOLE team's status, not just its own (read_inbox's).
+    monkeypatch.setenv(ENV_WORKER_IDS, "worker-1,worker-2,worker-3")
+    env.set_status("worker-1", "coordinating")
+    env.set_status("worker-2", "hooking RaspEngine")
+    # worker-3 has set no status yet.
+    out = json.loads(await bt.read_statuses()())
+    assert out == {
+        "worker-1": "coordinating",
+        "worker-2": "hooking RaspEngine",
+        "worker-3": None,
+    }
+
+
+async def test_read_statuses_needs_a_forum(monkeypatch):
+    # It is forum-only (like the other DM/status tools): no FORUM_DIR → a clear ToolError.
+    monkeypatch.delenv(ENV_FORUM_DIR, raising=False)
+    monkeypatch.setenv("AGENT_ID", "worker-1")
+    with pytest.raises(ToolError):
+        await bt.read_statuses()()
+
+
 # ---- spec wiring ---------------------------------------------------------------------------
 
-def test_forum_tools_spec_exposes_all_six_tools(env):
+def test_forum_tools_spec_exposes_all_seven_tools(env):
     spec = bt.forum_tools_spec()
     assert spec.name == bt.BOARD_MCP_NAME
-    assert len(spec.tools) == 6  # 3 board + send_dm + read_inbox + set_status
+    # 3 board + send_dm + read_inbox + set_status + read_statuses (ticket 03 peer-status read)
+    assert len(spec.tools) == 7
 
 
 def test_board_tools_spec_still_exposes_only_the_three_board_tools(env):

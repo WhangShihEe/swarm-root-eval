@@ -19,9 +19,12 @@ from swarm_eval.conductor import (
     ENV_FORUM_DIR,
     ENV_INSPECT_LOG_DIR,
     ENV_ROLE,
+    ENV_ROSTER,
     ENV_SWARM_ID,
     ENV_WORKER_IDS,
-    ROLE_WORKER,
+    ROLE_COORDINATOR,
+    ROLE_DYNAMIC,
+    ROLE_STATIC,
     Conductor,
     SwarmConfig,
     SwarmError,
@@ -35,6 +38,7 @@ from swarm_eval.conductor import (
 )
 from swarm_eval.forum import Forum
 from swarm_eval.messageboard import Board, board_dir
+from swarm_eval.target import WorkerRequest
 
 
 def _board_of(spec) -> Board:
@@ -255,7 +259,7 @@ def test_build_run_env_injects_the_full_contract(tmp_path):
         config=config,
         swarm_id="swarm-x",
         agent_id="worker-2",
-        role=ROLE_WORKER,
+        role=ROLE_DYNAMIC,
         log_dir=tmp_path / "logs" / "swarm-x",
         forum_dir=forum_dir,
         device_contract=tmp_path / "worker-2.device",
@@ -264,7 +268,7 @@ def test_build_run_env_injects_the_full_contract(tmp_path):
     assert env[ENV_FORUM_DIR] == str(forum_dir)
     assert env[ENV_SWARM_ID] == "swarm-x"
     assert env[ENV_AGENT_ID] == "worker-2"
-    assert env[ENV_ROLE] == ROLE_WORKER
+    assert env[ENV_ROLE] == ROLE_DYNAMIC
     assert env[ENV_INSPECT_LOG_DIR] == str(tmp_path / "logs" / "swarm-x")
     assert env[ENV_DEVICE_CONTRACT] == str(tmp_path / "worker-2.device")
     assert env[ENV_WORKER_IDS] == "worker-1,worker-2"
@@ -281,7 +285,26 @@ def test_build_run_env_omits_device_contract_and_roster_when_absent(tmp_path):
     )
     assert ENV_DEVICE_CONTRACT not in env
     assert ENV_WORKER_IDS not in env
+    assert ENV_ROSTER not in env
     assert env[ENV_FORUM_DIR] == str(tmp_path / "forum")
+
+
+def test_build_run_env_injects_the_role_map_for_a_device_less_worker(tmp_path):
+    # ticket 03: a device-less worker (static/coordinator) gets its role + the id→role roster, and
+    # NO device contract (none was leased for it).
+    env = build_run_env(
+        config=cfg(tmp_path),
+        swarm_id="s",
+        agent_id="worker-3",
+        role=ROLE_STATIC,
+        log_dir=tmp_path,
+        forum_dir=tmp_path / "forum",
+        worker_ids=["worker-1", "worker-3"],
+        role_map={"worker-1": ROLE_DYNAMIC, "worker-3": ROLE_STATIC},
+    )
+    assert ENV_DEVICE_CONTRACT not in env
+    assert env[ENV_ROLE] == ROLE_STATIC
+    assert env[ENV_ROSTER] == "worker-1:dynamic,worker-3:static"
 
 
 def test_build_run_argv_defaults_carry_a_time_limit(tmp_path):
@@ -355,6 +378,29 @@ def test_evaluate_board_partial_giveup_is_undecided():
 
 def test_evaluate_board_empty_is_undecided():
     assert evaluate_board([], ["worker-1"]) is None
+
+
+def test_evaluate_board_ignores_a_non_decider_success():
+    # ticket 03: only the DEVICE (`dynamic`) workers decide. A `success` from a support worker
+    # (static/coordinator — not in decider_ids) does NOT win; the verdict stays with the arbiter.
+    entries = [
+        {"id": "1", "type": "success", "author": "worker-3"},   # the coordinator
+        {"id": "2", "type": "giveup", "author": "worker-1"},     # the sole decider gave up
+    ]
+    v = evaluate_board(entries, ["worker-1"])
+    assert v is not None and v.value == "FAILURE"  # coordinator's success ignored; decider gave up
+
+
+def test_evaluate_board_all_deciders_giveup_ignores_support_workers():
+    # FAILURE the moment every DECIDER gives up — a still-silent static/coordinator does not hold
+    # the swarm open.
+    entries = [
+        {"id": "1", "type": "giveup", "author": "worker-1"},
+        {"id": "2", "type": "giveup", "author": "worker-2"},
+    ]
+    # worker-3 (static) and worker-4 (coordinator) are NOT deciders and never posted.
+    v = evaluate_board(entries, ["worker-1", "worker-2"])
+    assert v is not None and v.value == "FAILURE"
 
 
 def test_arbitrate_returns_success_immediately(tmp_path):
@@ -701,3 +747,110 @@ def test_run_from_eval_config_acquires_device_and_forwards_target_apk(tmp_path):
         ("configs/devices/pixel.yaml", "--target-apk", "apks/rasp_dummy/rasp_dummy.apk"),
         ("configs/devices/pixel.yaml", "--target-apk", "apks/rasp_dummy/rasp_dummy.apk"),
     ]
+
+
+# ---- swarm-improvements ticket 03: mixed-role roster ----------------------------------------
+
+MIXED_ROSTER = (
+    WorkerRequest(ROLE_DYNAMIC, 2),
+    WorkerRequest(ROLE_STATIC, 1),
+    WorkerRequest(ROLE_COORDINATOR, 1),
+)
+
+
+def _capturing_runner(outcomes: dict[str, str]):
+    """A runner that records each worker's injected `RunSpec.env` (so a test can assert the
+    per-role device gating + role/roster injection) and posts `outcomes[agent_id]` to the board."""
+    envs: dict[str, dict[str, str]] = {}
+
+    def runner(spec: C.RunSpec):
+        agent_id = spec.env[ENV_AGENT_ID]
+        envs[agent_id] = spec.env
+        kind = outcomes.get(agent_id)
+        if kind:
+            _board_of(spec).post(author=agent_id, subject=f"{agent_id} {kind}", content="x", type=kind)
+        return FakeHandle()
+
+    runner.envs = envs  # type: ignore[attr-defined]
+    return runner
+
+
+def test_swarm_config_worker_roles_flattens_the_roster(tmp_path):
+    # the flattened role list is the launch order; the default (no roster) is homogeneous dynamic.
+    assert cfg(tmp_path, workers=3).worker_roles() == [ROLE_DYNAMIC, ROLE_DYNAMIC, ROLE_DYNAMIC]
+    assert cfg(tmp_path, workers=4, roster=MIXED_ROSTER).worker_roles() == [
+        ROLE_DYNAMIC, ROLE_DYNAMIC, ROLE_STATIC, ROLE_COORDINATOR
+    ]
+
+
+def test_run_mixed_roster_leases_devices_only_for_dynamic(tmp_path):
+    # The headline acceptance criterion: a mixed roster launches, and ONLY the dynamic workers
+    # lease a device — static/coordinator get no contract, their role + the roster are injected.
+    config = cfg(tmp_path, workers=4, roster=MIXED_ROSTER)
+    broker = FakeBroker()
+    runner = _capturing_runner({"worker-1": "success"})  # a dynamic worker cracks it
+    result = _run(config, broker, runner, FakeClock())
+
+    assert result.verdict.value == "SUCCESS"
+    assert result.worker_ids == ["worker-1", "worker-2", "worker-3", "worker-4"]
+    # only the 2 dynamic workers leased (+ released) a device.
+    assert broker.n == 2
+    assert sorted(broker.released) == ["emulator-5554", "emulator-5556"]
+
+    envs = runner.envs  # type: ignore[attr-defined]
+    # roles injected per worker, in roster order.
+    assert [envs[f"worker-{i}"][ENV_ROLE] for i in range(1, 5)] == [
+        ROLE_DYNAMIC, ROLE_DYNAMIC, ROLE_STATIC, ROLE_COORDINATOR
+    ]
+    # dynamic workers carry a device contract; the device-less roles do not.
+    assert ENV_DEVICE_CONTRACT in envs["worker-1"] and ENV_DEVICE_CONTRACT in envs["worker-2"]
+    assert ENV_DEVICE_CONTRACT not in envs["worker-3"]
+    assert ENV_DEVICE_CONTRACT not in envs["worker-4"]
+    # every worker gets the full id→role roster so the coordinator can direct the right worker.
+    for i in range(1, 5):
+        assert envs[f"worker-{i}"][ENV_ROSTER] == (
+            "worker-1:dynamic,worker-2:dynamic,worker-3:static,worker-4:coordinator"
+        )
+
+
+def test_run_verdict_is_decided_by_dynamic_workers_not_the_coordinator(tmp_path):
+    # The coordinator does not own the verdict (criterion): its `success` post is ignored, and the
+    # run concludes FAILURE off the dynamic workers' giveup — the arbiter decides, not the manager.
+    config = cfg(tmp_path, workers=3, roster=(
+        WorkerRequest(ROLE_DYNAMIC, 1), WorkerRequest(ROLE_STATIC, 1), WorkerRequest(ROLE_COORDINATOR, 1),
+    ))
+    broker = FakeBroker()
+    # worker-1 = dynamic, worker-3 = coordinator. The coordinator claims success; the dynamic gives up.
+    runner = _capturing_runner({"worker-1": "giveup", "worker-3": "success"})
+    result = _run(config, broker, runner, FakeClock())
+
+    assert result.verdict.value == "FAILURE"
+    # only the one dynamic worker leased a device.
+    assert broker.n == 1 and broker.released == ["emulator-5554"]
+    # the coordinator's success is on the board, but it did NOT decide the run.
+    assert any(m["author"] == "worker-3" and m["type"] == "success"
+               for m in Board(result.board_path).list())
+
+
+def test_run_all_dynamic_giveup_concludes_without_waiting_on_support_roles(tmp_path):
+    # FAILURE once both dynamic workers give up — the still-silent static/coordinator do not hold
+    # the swarm open until the budget.
+    config = cfg(tmp_path, workers=4, roster=MIXED_ROSTER)
+    broker = FakeBroker()
+    clock = FakeClock()
+    result = _run(config, broker, _capturing_runner({"worker-1": "giveup", "worker-2": "giveup"}), clock)
+    assert result.verdict.value == "FAILURE"
+    assert "device worker(s) gave up" in result.verdict.reason
+    assert sorted(broker.released) == ["emulator-5554", "emulator-5556"]
+
+
+def test_run_device_less_only_roster_fails_fast(tmp_path):
+    # A roster with no `dynamic` worker has no one who can decide the verdict — fail fast (like the
+    # over-cap guard) rather than idle to the budget.
+    config = cfg(tmp_path, workers=2, roster=(
+        WorkerRequest(ROLE_STATIC, 1), WorkerRequest(ROLE_COORDINATOR, 1),
+    ))
+    broker = FakeBroker()
+    with pytest.raises(SwarmError, match="at least one `dynamic`"):
+        _run(config, broker, make_runner({}), FakeClock())
+    assert broker.n == 0  # nothing acquired

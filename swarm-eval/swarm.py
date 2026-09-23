@@ -60,8 +60,20 @@ def build_config(args: argparse.Namespace) -> SwarmConfig:
     is left unset, so the built-in defaults apply (no regression). `--log-dir` is only forwarded
     when given, so the config's under-`swarm-eval/` default stands otherwise."""
     run = load_run_config(args.spec)
+    # The per-role roster (swarm-improvements ticket 03): the eval config's `workers: [{role,
+    # count}]` mixes `dynamic`/`static`/`coordinator`, and only `dynamic` workers lease a device.
+    # `--workers N` is the homogeneous swarm-size sweep lever, so a given `--workers` OVERRIDES the
+    # roster with N `dynamic` workers (an empty roster resolves to N dynamic in the conductor);
+    # otherwise the eval config's roster stands (built-in default: 1 dynamic).
+    if args.workers is not None:
+        workers, roster = args.workers, ()
+    elif run.workers:
+        workers, roster = (run.worker_count or DEFAULT_WORKERS), run.workers
+    else:
+        workers, roster = DEFAULT_WORKERS, ()
     kwargs: dict = dict(
-        workers=_pick(args.workers, run.worker_count, DEFAULT_WORKERS),
+        workers=workers,
+        roster=roster,
         model=_pick(args.model, run.model, DEFAULT_MODEL),
         spec=args.spec,
         cap=_pick(args.cap, run.cap, DEFAULT_CAP),

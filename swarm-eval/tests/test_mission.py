@@ -132,3 +132,46 @@ def test_build_mission_skips_absent_note_sources():
     m = build_mission(t, contract_path=CONTRACT)
     assert "ONLY-APP" in m
     assert "\n\n\n" not in m  # no doubled blank line from a skipped source
+
+
+# ---- swarm-improvements ticket 03: the device-less role missions ---------------------------
+
+from swarm_eval.mission import build_coordinator_mission, build_static_mission  # noqa: E402
+
+STATIC = load_target("configs/evals/rasp_dummy.yaml", role="static")
+COORD = load_target("configs/evals/rasp_dummy.yaml", role="coordinator")
+
+
+def test_static_mission_is_device_less_and_board_oriented():
+    m = build_static_mission(STATIC)
+    # the static toolchain is named for the agent to use.
+    for tool in ("jadx", "apktool", "androguard"):
+        assert tool in m
+    # the device OPERATING MANUAL (_device_and_tools) is NOT included — no device was leased, so
+    # its connect/contract boilerplate must be absent (app `details` may still mention runtime
+    # approaches as shared swarm context; that is intel, not this worker's instructions).
+    assert _device_and_tools(CONTRACT) not in m
+    for device_manual in ("connect-device.sh", "device-contract.env"):
+        assert device_manual not in m, f"static mission must not carry the device manual {device_manual!r}"
+    # it is framed as device-less: don't reach for an emulator that was never leased.
+    assert "NO device" in m and "Do not run `adb`" in m
+    # its deliverable is intel on the board, and it self-reports FAILURE (it confirms no bypass).
+    assert "finding" in m and "board" in m
+    assert f"{VERDICT_TOKEN}: FAILURE" in m
+    # the shipped static role's own notes open the mission.
+    assert "STATIC-ANALYSIS" in m
+
+
+def test_coordinator_mission_directs_named_peers_and_is_denied_done():
+    roster = {"worker-1": "dynamic", "worker-2": "static", "worker-3": "coordinator"}
+    m = build_coordinator_mission(COORD, roster)
+    # every peer is named with its role so the coordinator can direct the right worker.
+    for aid, role in roster.items():
+        assert f"{aid} ({role})" in m
+    # it is a manager: reads the board/status and DMs, but does not do the work or own the verdict.
+    assert "send_dm" in m
+    assert "cannot post `done`" in m
+    assert "own the verdict" in m
+    assert f"{VERDICT_TOKEN}: FAILURE" in m  # it never claims the bypass itself
+    # the device operating manual is not part of a device-less role's mission.
+    assert _device_and_tools(CONTRACT) not in m and "connect-device.sh" not in m

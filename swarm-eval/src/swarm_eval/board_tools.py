@@ -248,6 +248,30 @@ def set_status() -> Tool:
     return execute
 
 
+@tool
+def read_statuses() -> Tool:
+    async def execute() -> str:
+        """Read EVERY agent's current one-line status — who on the swarm is working on what.
+
+        Unlike `read_inbox` (which returns only your own status), this reports every peer's latest
+        `set_status` line, so you can see the whole team's focus at a glance and spot stuck or
+        duplicated work. Especially useful as a coordinator directing the others. Statuses are the
+        CURRENT state, not a log — durable findings live on the board.
+
+        Returns:
+            A JSON object mapping each agent id to its current status string (or null if it has
+            not set one yet).
+        """
+        forum = _forum()
+        roster = _roster()
+        # Report the injected roster (every known peer, even one that has set no status yet) when we
+        # have it; otherwise let the forum discover whoever has an inbox (a bare test/demo).
+        ids = sorted(roster) if roster is not None else None
+        return json.dumps(forum.statuses(ids), ensure_ascii=False)
+
+    return execute
+
+
 def board_tools(*, allow_done: bool = False) -> list[Tool]:
     """The three board tools for one run. `allow_done=True` for the arbiter run (05b), which is
     the only participant permitted to post the reserved `done` verdict."""
@@ -256,9 +280,14 @@ def board_tools(*, allow_done: bool = False) -> list[Tool]:
 
 def forum_tools(*, allow_done: bool = False) -> list[Tool]:
     """The full forum toolset a swarm worker gets (ticket 01): the three board tools plus the
-    direct-messaging layer (`send_dm`/`read_inbox`/`set_status`). The board tools fall back to the
-    legacy board when no forum is injected; the DM/status tools are forum-only."""
-    return [*board_tools(allow_done=allow_done), send_dm(), read_inbox(), set_status()]
+    direct-messaging + status layer (`send_dm`/`read_inbox`/`set_status`/`read_statuses`). The
+    board tools fall back to the legacy board when no forum is injected; the DM/status tools are
+    forum-only. `read_statuses` (ticket 03) exposes every PEER's status so a coordinator can see
+    who is doing what — `read_inbox` only returns the caller's own."""
+    return [
+        *board_tools(allow_done=allow_done),
+        send_dm(), read_inbox(), set_status(), read_statuses(),
+    ]
 
 
 def board_tools_spec(*, allow_done: bool = False) -> BridgedToolsSpec:

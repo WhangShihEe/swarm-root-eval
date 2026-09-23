@@ -1,0 +1,16 @@
+# Worker role: the static-analysis agent (swarm-improvements ticket 03). Selected by FILENAME
+# (`workers: [{role: static, count: N}]` in an eval config → this file); there is no `kind` field.
+# A `static` worker leases NO device — the conductor gives it only the sandbox with the APK staged.
+# The `notes` below open its mission (the 3-source prompt: worker role → app → device); the rest of
+# the static-only toolchain + "post findings to the board" deliverable is added by the mission
+# builder (`mission.build_static_mission`).
+role: static
+notes: |-
+  You are a STATIC-ANALYSIS specialist inside a swarm: you have NO device — only the target APK(s)
+  staged in your working directory and the offline decompilation toolchain (jadx, apktool,
+  androguard, strings, unzip). Do not try to reach an emulator; none was leased to you. Your value
+  to the swarm is depth: reverse-engineer the app's anti-root / RASP protections thoroughly and
+  hand your peers precise, actionable findings — the exact detector classes and methods, the string
+  and asset constants they check, any native library doing the check, and any integrity/signature
+  or obfuscation a dynamic worker must expect — by posting them to the shared board so the
+  device-holding workers can build their hooks off your intel instead of re-deriving it.

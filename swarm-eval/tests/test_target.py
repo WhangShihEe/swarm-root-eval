@@ -353,6 +353,36 @@ def test_eval_config_without_overrides_leaves_them_none():
     assert t.worker_notes and "dynamic-analysis agent" in t.worker_notes
 
 
+def test_load_target_role_selects_that_roles_notes(tmp_path):
+    # swarm-improvements ticket 03: a swarm worker loads its OWN role's notes, so a mixed roster
+    # yields a different mission opener per role. Custom role files carry marker notes.
+    (tmp_path / "dyn.yaml").write_text("role: dynamic\nnotes: DYN-MARK\n", encoding="utf-8")
+    (tmp_path / "sta.yaml").write_text("role: static\nnotes: STATIC-MARK\n", encoding="utf-8")
+    ev = tmp_path / "eval.yaml"
+    ev.write_text(
+        "app: configs/apps/rasp_dummy.yaml\ndevice: pixel\n"
+        f"workers:\n  - role: {tmp_path / 'dyn.yaml'}\n    count: 1\n"
+        f"  - role: {tmp_path / 'sta.yaml'}\n    count: 1\n",
+        encoding="utf-8",
+    )
+    # role=None keeps the FIRST role's notes (the role-agnostic host/single path).
+    assert load_target(ev).worker_notes == "DYN-MARK"
+    # each role loads its own notes.
+    assert load_target(ev, role=str(tmp_path / "dyn.yaml")).worker_notes == "DYN-MARK"
+    assert load_target(ev, role=str(tmp_path / "sta.yaml")).worker_notes == "STATIC-MARK"
+
+
+def test_load_target_shipped_static_and_coordinator_roles():
+    # The two device-less roles ship as configs/workers/{static,coordinator}.yaml, selected by name.
+    assert "STATIC-ANALYSIS" in (load_target(RASP_EVAL, role="static").worker_notes or "")
+    assert "COORDINATOR" in (load_target(RASP_EVAL, role="coordinator").worker_notes or "")
+
+
+def test_load_target_unknown_role_raises():
+    with pytest.raises(ValueError, match="worker role 'nope'"):
+        load_target(RASP_EVAL, role="nope")
+
+
 def test_eval_config_workers_list_validates_every_role(tmp_path):
     # The list shape validates each referenced role file, as loudly as a bare-name ref.
     ev = tmp_path / "eval.yaml"

@@ -141,6 +141,22 @@ def test_statuses_are_per_worker(forum):
     assert forum.get_status("worker-2") == "on task B"
 
 
+def test_statuses_reports_the_whole_roster(forum):
+    # ticket 03: the coordinator's peer-status read. With an explicit roster, every named worker
+    # appears (one that set none maps to None); order follows the roster.
+    forum.set_status("worker-1", "coordinating")
+    forum.set_status("worker-2", "hooking")
+    got = forum.statuses(["worker-1", "worker-2", "worker-3"])
+    assert got == {"worker-1": "coordinating", "worker-2": "hooking", "worker-3": None}
+
+
+def test_statuses_discovers_workers_when_no_roster_given(forum):
+    # Without a roster it discovers whoever has an inbox (a bare demo/test).
+    forum.set_status("worker-2", "busy")
+    forum.set_status("worker-1", "idle")
+    assert forum.statuses() == {"worker-1": "idle", "worker-2": "busy"}
+
+
 # ---- shared substrate: two handles on one forum see each other -----------------------------
 
 def test_two_handles_on_one_forum_share_state(tmp_path):
