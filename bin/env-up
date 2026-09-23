@@ -6,13 +6,17 @@
 # genuinely usable. Prints the adb serial `emulator-<console_port>` on stdout (and nothing
 # else there, so callers can capture it); all progress goes to stderr.
 #
-# If a target APK is resolved (--target-apk / TARGET_APK=<path> / the env var / the spec's
-# target_apk) and the spec's `provision` toggle is not false, the booted device is then
-# provisioned (root shell, frida-server, APK installed, settings normalized — bin/_provision.sh)
-# and verified before the serial is printed. With no target APK it bare-boots (ticket 03).
-# Teardown is bin/env-down.
+# The APK is an EXPLICIT input (ticket 01, apk-agnostic prefactor): the device layer no longer
+# reads it from the spec. If an APK is given (--apk / --target-apk / TARGET_APK=<path> / the env
+# var) and the spec's `provision` toggle is not false, the booted device is then provisioned
+# (root shell, frida-server, APK installed, settings normalized — bin/_provision.sh) and verified
+# before the serial is printed. With NO APK it bare-boots (an emulator with no app, for testing
+# the device layer on its own) — and does not error on a missing app. The caller that still wants
+# the spec's app (the pool/broker provisioning path) resolves the spec's target_apk itself
+# (spec_target_apk) and passes it here. Teardown is bin/env-down.
 #
-#   bin/env-up --spec devices/pixel-a37.yaml [--port 5554] [--target-apk <apk|dir>]
+#   bin/env-up --spec devices/pixel-a37.yaml [--port 5554] [--apk <apk|dir>]
+#   bin/env-up --spec devices/pixel-a37.yaml                 # bare boot (no app installed)
 #   TARGET_APK=<apk> bin/env-up --spec devices/pixel-a37.yaml
 #   bin/env-up --spec devices/rootbeer.yaml --window   # watch a real emulator on screen
 set -uo pipefail
@@ -30,10 +34,12 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 log() { printf 'env-up: %s\n' "$*" >&2; }
 die() { printf 'env-up: %s\n' "$*" >&2; exit 1; }
 
-usage() { echo "usage: env-up --spec <device-spec.yaml> [--port <console_port>] [--target-apk <apk|dir>] [--window|--no-window] [--writable-system|--frida-only|--profile <p>]" >&2; }
+usage() { echo "usage: env-up --spec <device-spec.yaml> [--port <console_port>] [--apk <apk|dir>] [--window|--no-window] [--writable-system|--frida-only|--profile <p>]" >&2; }
 
-# TARGET_APK env var seeds the target; a --target-apk flag or a TARGET_APK=<path> token
-# overrides it, and the spec's target_apk is the fallback (resolved after spec_load).
+# TARGET_APK env var seeds the target; an --apk / --target-apk flag or a TARGET_APK=<path> token
+# overrides it. There is NO spec fallback (ticket 01): the device layer never reads the APK from
+# the spec — with no APK given it bare-boots. (--apk is the ticket-01 name; --target-apk is kept
+# as an alias for the broker/pool/verify callers that already speak it.)
 # WRITABLE_ARG (from --writable-system/--frida-only/--profile) overrides the spec's
 # writable_system; empty means "use the spec" (ticket 07).
 # ENVUP_PROFILE_OUT (env var, optional): a file path we write the resolved profile name to
@@ -47,7 +53,9 @@ while [ $# -gt 0 ]; do
     --spec=*) SPEC=${1#--spec=}; shift ;;
     --port) PORT=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
     --port=*) PORT=${1#--port=}; shift ;;
-    --target-apk) TARGET_APK_ARG=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+    --apk) TARGET_APK_ARG=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;          # ticket-01 name
+    --apk=*) TARGET_APK_ARG=${1#--apk=} ; shift ;;
+    --target-apk) TARGET_APK_ARG=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;  # alias (broker/pool/verify)
     --target-apk=*) TARGET_APK_ARG=${1#--target-apk=} ; shift ;;
     TARGET_APK=*) TARGET_APK_ARG=${1#TARGET_APK=} ; shift ;;   # literal ticket syntax
     --window|--headed)    HEADLESS_ARG=false; shift ;;   # show the emulator window
@@ -199,15 +207,15 @@ if [ "$WRITABLE_SYSTEM" = true ]; then
 fi
 
 # --- provision to t=0 (ticket 04) --------------------------------------------------------
-# Resolve the target APK: an explicit --target-apk / TARGET_APK arg wins over the spec's
-# target_apk. Path normalization (~/ expansion, relative→CWD→repo-root) is shared with
-# bin/verify via apk_resolve_path so the two never disagree about a spec's target_apk.
+# Resolve the target APK: it comes ONLY from the explicit --apk / --target-apk / TARGET_APK arg
+# (ticket 01 — no spec fallback; the device layer does not read the APK from the spec). Path
+# normalization (~/ expansion, relative→CWD→repo-root) is shared with bin/verify via
+# apk_resolve_path so the two never disagree about a given APK path.
 TARGET_APK="$TARGET_APK_ARG"
-[ -n "$TARGET_APK" ] || TARGET_APK="${SPEC_TARGET_APK:-}"
 [ -n "$TARGET_APK" ] && TARGET_APK="$(apk_resolve_path "$TARGET_APK")"
 
 if [ -z "$TARGET_APK" ]; then
-  log "no target APK (--target-apk / TARGET_APK / spec target_apk) — bare boot, skipping provisioning"
+  log "no target APK (--apk / --target-apk / TARGET_APK) — bare boot, skipping provisioning"
 elif [ "${SPEC_PROVISION:-true}" = false ]; then
   log "spec provision=false — bare boot, skipping provisioning (target APK '$TARGET_APK' not installed)"
 else

@@ -114,6 +114,29 @@ chmod +x "$FAKEBIN/env-up-echo"
 POOL_ENV_UP="$FAKEBIN/env-up-echo" POOL_CAP=3 pool_acquire "$SPEC" --target-apk /x/y.apk >/dev/null
 grep -q -- "--target-apk /x/y.apk" "$FAKE_LOG" && ok "forwarded --target-apk to env-up" || bad "extra args not forwarded"
 
+echo "== ticket 01: the engine resolves the spec's target_apk and passes it to env-up =="
+# The device layer (env-up) no longer reads the APK from the spec; the provisioning path
+# (this engine) resolves the spec's target_apk and hands it over with --target-apk. Use a
+# real spec carrying a target_apk and assert the engine injected exactly that path.
+reset_pool
+APK_SPEC="$POOL_ROOT/with-apk.yaml"
+printf 'name: x\ntarget_apk: /apks/from-spec.apk\n' > "$APK_SPEC"
+POOL_ENV_UP="$FAKEBIN/env-up-echo" POOL_CAP=3 pool_acquire "$APK_SPEC" >/dev/null
+grep -q -- "--target-apk /apks/from-spec.apk" "$FAKE_LOG" \
+  && ok "engine injected the spec's target_apk" || bad "spec target_apk not resolved+passed"
+
+echo "== ticket 01: an explicit --target-apk is NOT overridden by the spec's =="
+reset_pool
+POOL_ENV_UP="$FAKEBIN/env-up-echo" POOL_CAP=3 pool_acquire "$APK_SPEC" --target-apk /x/y.apk >/dev/null
+grep -q -- "--target-apk /x/y.apk" "$FAKE_LOG" && ok "explicit APK honored" || bad "explicit APK lost"
+grep -q -- "--target-apk /apks/from-spec.apk" "$FAKE_LOG" && bad "spec APK wrongly injected too" || ok "spec APK not double-injected"
+
+echo "== ticket 01: a spec with no target_apk injects nothing (bare boot) =="
+reset_pool
+BARE_SPEC="$POOL_ROOT/bare.yaml"; printf 'name: x\n' > "$BARE_SPEC"
+POOL_ENV_UP="$FAKEBIN/env-up-echo" POOL_CAP=3 pool_acquire "$BARE_SPEC" >/dev/null
+grep -q -- "--target-apk" "$FAKE_LOG" && bad "injected an APK for a bare spec" || ok "no APK injected for a bare spec"
+
 echo "== the launch profile env-up resolves is recorded + reported (ticket 08) =="
 # A profile override passes through to env-up; the engine records the REAL profile env-up
 # resolved (here frida-only) and puts it in the connection contract + the slot registry.

@@ -30,6 +30,13 @@
 # tests/pool.sh with a fake env-up/env-down; the live bring-up is exercised by `bin/pool
 # demo` against a real emulator.
 
+# The provisioning path resolves the spec's target_apk to hand to env-up explicitly (ticket 01:
+# the device layer no longer reads the APK from the spec). Pull in the spec getters; sourced by
+# directory so this works whether or not the caller already sourced _spec.sh, and re-sourcing is
+# idempotent (_spec.sh only defines functions + the _SPEC_KEYS constant — no actions run).
+# shellcheck source=./_spec.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_spec.sh"
+
 # --- config: pool dir, cap, and the (overridable) bring-up/teardown commands -------------
 # POOL_DIR    where the registry + per-slot AVD homes live (default: repo-local .pool/).
 # POOL_CAP    max concurrent devices (a single config value, default 6; N=1 is the default
@@ -133,14 +140,26 @@ pool_acquire() {
 
   # The engine assigns --spec/--port; a passthrough copy would let env-up honor the LAST
   # --port and desync the registry (slot named X, emulator booted on Y, release kills neither).
-  local a
+  local a apk_explicit=
   for a in "$@"; do
     case "$a" in
       --spec|--spec=*|--port|--port=*)
         echo "pool: the engine assigns --spec/--port; don't pass them to acquire (got '$a')" >&2
         return 2 ;;
+      --apk|--apk=*|--target-apk|--target-apk=*|TARGET_APK=*)
+        apk_explicit=1 ;;   # caller already named the APK — don't inject the spec's
     esac
   done
+
+  # ticket 01: env-up (the device layer) no longer reads the APK from the spec — the
+  # provisioning path passes it explicitly. When the caller didn't name an APK (and hasn't set
+  # the TARGET_APK env var env-up honors), resolve the spec's target_apk here and hand it to
+  # env-up via --target-apk. A spec with no target_apk resolves empty -> env-up bare-boots.
+  local apk_args=()
+  if [ -z "$apk_explicit" ] && [ -z "${TARGET_APK:-}" ]; then
+    local spec_apk; spec_apk="$(spec_target_apk "$spec")"
+    [ -n "$spec_apk" ] && apk_args=(--target-apk "$spec_apk")
+  fi
 
   local slots port= p slotdir avd_home
   slots="$(_pool_slots_dir)"; mkdir -p "$slots"
@@ -183,8 +202,10 @@ pool_acquire() {
   # slot dir owns — so we record the *real* launch profile without parsing env-up's stdout.
   local serial rc profile_out profile
   profile_out="$slotdir/env-up.profile"
+  # ${apk_args[@]+…} guard: on macOS bash 3.2 a bare "${apk_args[@]}" for an empty array trips
+  # set -u. The injected --target-apk precedes "$@" so an explicit caller flag would still win.
   serial="$(ANDROID_AVD_HOME="$avd_home" ENVUP_PROFILE_OUT="$profile_out" \
-            "$(_pool_env_up)" --spec "$spec" --port "$port" "$@")"
+            "$(_pool_env_up)" --spec "$spec" --port "$port" ${apk_args[@]+"${apk_args[@]}"} "$@")"
   rc=$?
   if [ "$rc" -ne 0 ] || [ -z "$serial" ]; then
     echo "pool: bring-up failed for $spec on port $port (env-up rc=$rc) — reclaiming slot" >&2

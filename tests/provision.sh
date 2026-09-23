@@ -99,21 +99,30 @@ data_size_mb: 8192
 YAML
 }
 
-echo "== spec: no new keys -> loads, toggles default true, target_apk empty =="
+echo "== spec: no new keys -> loads, toggles default true (ticket 01: no APK read by spec_load) =="
 S1="$(mktemp)"; base_spec "$S1"
 out="$(ANDROID_SDK_ROOT="$FAKE_SDK" bash -c '
   . "'"$ROOT"'/bin/_spec.sh"; spec_load "'"$S1"'" || exit 9
   printf "%s|%s|%s|%s|%s\n" "${SPEC_TARGET_APK-<UNSET>}" "$SPEC_PROVISION" "$SPEC_FRIDA" "$SPEC_NORMALIZE_SETTINGS" "$SPEC_HEADLESS"')"
-check "defaults (headless true too)" "$out" "|true|true|true|true"
+# ticket 01: the bring-up loader no longer surfaces the APK — spec_load leaves SPEC_TARGET_APK unset.
+check "spec_load defaults (no SPEC_TARGET_APK)" "$out" "<UNSET>|true|true|true|true"
+# a bare spec has no target_apk, so the caller-facing getter is empty
+check "spec_target_apk empty when absent" \
+  "$(bash -c '. "'"$ROOT"'/bin/_spec.sh"; spec_target_apk "'"$S1"'"')" ""
 rm -f "$S1"
 
-echo "== spec: target_apk + provision:false + headless:false honored =="
+echo "== spec: target_apk read by the getter; toggles honored by spec_load (ticket 01) =="
 S2="$(mktemp)"; base_spec "$S2"
 printf 'target_apk: "/apks/rootbeer.apk"\nprovision: false\nfrida: true\nnormalize_settings: false\nheadless: false\n' >> "$S2"
 out="$(ANDROID_SDK_ROOT="$FAKE_SDK" bash -c '
   . "'"$ROOT"'/bin/_spec.sh"; spec_load "'"$S2"'" || exit 9
-  printf "%s|%s|%s|%s|%s\n" "$SPEC_TARGET_APK" "$SPEC_PROVISION" "$SPEC_FRIDA" "$SPEC_NORMALIZE_SETTINGS" "$SPEC_HEADLESS"')"
-check "explicit values" "$out" "/apks/rootbeer.apk|false|true|false|false"
+  printf "%s|%s|%s|%s|%s\n" "${SPEC_TARGET_APK-<UNSET>}" "$SPEC_PROVISION" "$SPEC_FRIDA" "$SPEC_NORMALIZE_SETTINGS" "$SPEC_HEADLESS"')"
+# ticket 01: even with a target_apk present, spec_load must NOT set SPEC_TARGET_APK (the device
+# layer no longer reads the APK from the spec); the toggles are still honored.
+check "spec_load toggles (still no SPEC_TARGET_APK)" "$out" "<UNSET>|false|true|false|false"
+# the caller-facing getter is how the APK is now resolved from the spec
+check "spec_target_apk returns the value" \
+  "$(bash -c '. "'"$ROOT"'/bin/_spec.sh"; spec_target_apk "'"$S2"'"')" "/apks/rootbeer.apk"
 rm -f "$S2"
 rm -rf "$FAKE_SDK"
 

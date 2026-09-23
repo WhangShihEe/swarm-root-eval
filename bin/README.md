@@ -90,10 +90,11 @@ is the authoritative reference for its flags — this file does not duplicate th
   `acquire`/`release`/`status`/`down-all`/`demo` against the file-backed registry, no standing
   service. The broker wraps this engine; use `bin/pool` directly to drive the pool without a
   daemon.
-- **`bin/env-up`** — boot one emulator from a device-spec YAML on an explicit port and, if a
-  target APK is resolved and the spec's `provision` toggle isn't false, provision it to t=0
-  (root shell, frida-server, APK installed, settings normalized) and verify before printing the
-  serial. Bare-boots with no target APK.
+- **`bin/env-up`** — boot one emulator from a device-spec YAML on an explicit port and, if an
+  APK is given (`--apk <path>`, an explicit input — the device layer does not read it from the
+  spec) and the spec's `provision` toggle isn't false, provision it to t=0 (root shell,
+  frida-server, APK installed, settings normalized) and verify before printing the serial.
+  Bare-boots with no APK. The pool/broker resolves the spec's `target_apk` and passes it here.
 - **`bin/env-down`** — tear down what `env-up` created (kill the instance; delete the AVD unless
   `--keep-avd`). Symmetric with `env-up`: the harness invariant is "reset = full rebuild, no
   golden snapshot."

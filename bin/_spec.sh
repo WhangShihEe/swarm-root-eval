@@ -16,6 +16,13 @@ _SPEC_KEYS="name device_profile system_image api ram_mb cores data_size_mb"
 # spec_get FILE KEY — echo the scalar value, or empty for a missing/null key.
 spec_get() { yq "(.${2}) // \"\"" "$1" 2>/dev/null; }
 
+# spec_target_apk FILE — echo the spec's target_apk (empty for a missing/null key). NOT part
+# of spec_load: the bring-up scripts (env-up and friends) no longer read the APK from the spec
+# (ticket 01, apk-agnostic prefactor) — the APK is passed explicitly to the device layer. This
+# getter is for a *caller* (the pool/broker provisioning path, bin/verify) that still sources
+# the APK from the current spec and hands it to the device layer via --target-apk.
+spec_target_apk() { spec_get "$1" target_apk; }
+
 # spec_name FILE — echo just the .name (no full validation). Used by teardown.
 spec_name() {
   [ -f "$1" ] || return 1
@@ -74,11 +81,15 @@ spec_load() {
     return 3
   fi
 
-  # Optional ticket-04 provisioning fields (absent in a bare ticket-03 spec, so they must
-  # never be required). target_apk names the APK to install; the toggles gate provisioning
-  # steps. All default on; an explicit value in the spec wins, and env-up may override
-  # target_apk from --target-apk / TARGET_APK.
-  SPEC_TARGET_APK=$(spec_get "$f" target_apk)
+  # Optional ticket-04 provisioning toggles (absent in a bare ticket-03 spec, so they must
+  # never be required). The toggles gate provisioning steps; all default on, an explicit value
+  # in the spec wins.
+  #
+  # ticket 01 (apk-agnostic prefactor): the device-layer loader deliberately does NOT read the
+  # APK. `target_apk` is no longer part of `spec_load` — the bring-up path (env-up) takes the APK
+  # explicitly (--apk/--target-apk), and a *caller* that still sources the APK from the spec uses
+  # the `spec_target_apk` getter below to resolve it and hand it over. This decouples "the
+  # emulator" (provisioning scalars) from "the app under test" (the APK) in the bring-up scripts.
   SPEC_PROVISION=$(spec_bool "$f" provision true)
   SPEC_FRIDA=$(spec_bool "$f" frida true)
   SPEC_NORMALIZE_SETTINGS=$(spec_bool "$f" normalize_settings true)

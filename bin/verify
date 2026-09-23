@@ -4,11 +4,11 @@
 # Exits 0 iff the device is reachable (booted), frida-server is up (the host frida client
 # reaches it), and the target package is installed. Exits non-zero with a single clear
 # reason otherwise. The target package is taken from --package, or derived from an APK
-# (--target-apk), or from the spec's target_apk (--spec). Serial defaults to the console
+# (--apk/--target-apk), or from the spec's target_apk (--spec). Serial defaults to the console
 # port (--port, default 5554) or --serial.
 #
 #   bin/verify --serial emulator-5554 --package sg.gov.hpb.healthhub
-#   bin/verify --spec devices/pixel-a37.yaml --target-apk ~/apks/healthhub
+#   bin/verify --spec devices/pixel-a37.yaml --apk ~/apks/healthhub
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,7 +25,7 @@ if [ -t 1 ]; then _G=$'\033[32m'; _R=$'\033[31m'; _Z=$'\033[0m'; else _G=; _R=; 
 pass() { printf '  %s✓%s %s\n' "$_G" "$_Z" "$1" >&2; }
 fail() { printf '  %s✗%s %s\n' "$_R" "$_Z" "$1" >&2; [ -n "${2:-}" ] && printf '     → %s\n' "$2" >&2; exit 1; }
 log()  { printf 'verify: %s\n' "$*" >&2; }
-usage(){ echo "usage: verify [--serial <s> | --port <p>] (--package <pkg> | --target-apk <apk|dir> | --spec <yaml>) [--writable-system|--frida-only|--profile <p>]" >&2; }
+usage(){ echo "usage: verify [--serial <s> | --port <p>] (--package <pkg> | --apk <apk|dir> | --spec <yaml>) [--writable-system|--frida-only|--profile <p>]" >&2; }
 
 SERIAL= PORT=5554 PKG= TARGET_APK= SPEC= WRITABLE_ARG=
 while [ $# -gt 0 ]; do
@@ -36,7 +36,9 @@ while [ $# -gt 0 ]; do
     --port=*) PORT=${1#--port=}; shift ;;
     --package) PKG=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
     --package=*) PKG=${1#--package=}; shift ;;
-    --target-apk) TARGET_APK=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
+    --apk) TARGET_APK=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;          # ticket-01 name
+    --apk=*) TARGET_APK=${1#--apk=}; shift ;;
+    --target-apk) TARGET_APK=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;  # alias
     --target-apk=*) TARGET_APK=${1#--target-apk=}; shift ;;
     --spec) SPEC=${2:-}; shift $(( $# > 1 ? 2 : 1 )) ;;
     --spec=*) SPEC=${1#--spec=}; shift ;;
@@ -63,14 +65,14 @@ done
 
 [ -n "$SERIAL" ] || SERIAL="emulator-$PORT"
 
-# Resolve the package to look for: --package wins; else derive from --target-apk; else the
-# spec's target_apk (which may need the same ~/ expansion env-up does).
+# Resolve the package to look for: --package wins; else derive from --apk/--target-apk; else the
+# spec's target_apk (which may need the same ~/ expansion env-up does). ticket 01: the APK is no
+# longer part of spec_load, so read it with the caller-facing spec_target_apk getter.
 if [ -z "$PKG" ]; then
   if [ -z "$TARGET_APK" ] && [ -n "$SPEC" ]; then
-    spec_load "$SPEC" >/dev/null 2>&1 || true   # only need target_apk; don't hard-fail on image
-    TARGET_APK="${SPEC_TARGET_APK:-}"
+    TARGET_APK="$(spec_target_apk "$SPEC")"   # caller resolves the spec's APK (no spec_load)
   fi
-  [ -n "$TARGET_APK" ] || { usage; fail "no package to check" "pass --package <pkg>, or --target-apk/--spec to derive it"; }
+  [ -n "$TARGET_APK" ] || { usage; fail "no package to check" "pass --package <pkg>, or --apk/--spec to derive it"; }
   TARGET_APK="$(apk_resolve_path "$TARGET_APK")"   # shared with env-up: same rules both ways
   [ -e "$TARGET_APK" ] || fail "target APK not found: $TARGET_APK"
   PKG="$(apk_package "$TARGET_APK")" || fail "could not derive package from $TARGET_APK" "is aapt on PATH? source bin/env.sh"
