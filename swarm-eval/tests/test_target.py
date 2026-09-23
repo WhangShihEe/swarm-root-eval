@@ -37,7 +37,7 @@ _healthhub_corpus = pytest.mark.skipif(
 )
 
 
-def _write_eval(tmp_path: Path, app_body: str, *, device: str = "rasp_dummy",
+def _write_eval(tmp_path: Path, app_body: str, *, device: str = "pixel",
                 workers: str = "dynamic") -> Path:
     """Write a tmp app file (`app_body`) + an eval config referencing it, and return the eval
     path. The device/workers references resolve to the shipped `configs/{devices,workers}` files
@@ -218,7 +218,7 @@ def test_eval_config_resolves_app_and_device_references():
     # provisioning-only device and is handed the app's APK explicitly.
     t = load_target(RASP_EVAL)
     assert t.spec_path == RASP_EVAL
-    assert t.device_spec == "configs/devices/rasp_dummy.yaml"
+    assert t.device_spec == "configs/devices/pixel.yaml"
     assert t.broker_apk == "apks/rasp_dummy/rasp_dummy.apk"
     # the APK file-set comes from the app file's target_apk
     assert t.apk_name == "rasp_dummy.apk"
@@ -238,12 +238,12 @@ def test_eval_config_accepts_path_style_references(tmp_path):
     ev = tmp_path / "eval.yaml"
     ev.write_text(
         "app: configs/apps/rasp_dummy.yaml\n"
-        "device: configs/devices/rasp_dummy.yaml\n"
+        "device: configs/devices/pixel.yaml\n"
         "workers: dynamic\n",
         encoding="utf-8",
     )
     t = load_target(ev)
-    assert t.device_spec == "configs/devices/rasp_dummy.yaml"
+    assert t.device_spec == "configs/devices/pixel.yaml"
     assert t.broker_apk == "apks/rasp_dummy/rasp_dummy.apk"
 
 
@@ -256,7 +256,7 @@ def test_eval_config_missing_device_file_raises(tmp_path):
 
 def test_eval_config_missing_app_file_raises(tmp_path):
     ev = tmp_path / "eval.yaml"
-    ev.write_text("app: nope\ndevice: rasp_dummy\n", encoding="utf-8")
+    ev.write_text("app: nope\ndevice: pixel\n", encoding="utf-8")
     with pytest.raises(ValueError, match="app"):
         load_target(ev)
 
@@ -264,7 +264,7 @@ def test_eval_config_missing_app_file_raises(tmp_path):
 def test_eval_config_bad_workers_ref_raises(tmp_path):
     # A typo'd `workers:` fails as loudly as a bad app/device ref (the role file must exist).
     ev = tmp_path / "eval.yaml"
-    ev.write_text("app: rasp_dummy\ndevice: rasp_dummy\nworkers: nope\n", encoding="utf-8")
+    ev.write_text("app: rasp_dummy\ndevice: pixel\nworkers: nope\n", encoding="utf-8")
     with pytest.raises(ValueError, match="workers"):
         load_target(ev)
 
@@ -275,9 +275,9 @@ def test_eval_config_app_owns_target_apk_no_frida_mode():
     assert app["target_apk"] == "apks/rasp_dummy/rasp_dummy.apk"
     assert "frida_mode" not in app
     # and the device file is provisioning-only (no app block, no APK)
-    dev = yaml.safe_load((_ROOT / "configs/devices/rasp_dummy.yaml").read_text())
+    dev = yaml.safe_load((_ROOT / "configs/devices/pixel.yaml").read_text())
     assert "app" not in dev and "target_apk" not in dev
-    assert dev["name"] == "rasp_dummy" and dev["system_image"]
+    assert dev["name"] == "pixel" and dev["system_image"]
 
 
 def test_no_config_yaml_carries_frida_mode():
@@ -357,7 +357,7 @@ def test_eval_config_workers_list_validates_every_role(tmp_path):
     # The list shape validates each referenced role file, as loudly as a bare-name ref.
     ev = tmp_path / "eval.yaml"
     ev.write_text(
-        "app: rasp_dummy\ndevice: rasp_dummy\n"
+        "app: rasp_dummy\ndevice: pixel\n"
         "workers:\n  - role: dynamic\n    count: 1\n  - role: nope\n    count: 1\n",
         encoding="utf-8",
     )
@@ -380,7 +380,7 @@ def test_load_run_config_reads_model_workers_and_limits():
 def test_load_run_config_sums_worker_counts(tmp_path):
     ev = tmp_path / "eval.yaml"
     ev.write_text(
-        "app: rasp_dummy\ndevice: rasp_dummy\n"
+        "app: rasp_dummy\ndevice: pixel\n"
         "workers:\n  - role: dynamic\n    count: 2\n  - role: dynamic\n    count: 3\n",
         encoding="utf-8",
     )
@@ -390,7 +390,7 @@ def test_load_run_config_sums_worker_counts(tmp_path):
 def test_load_run_config_bare_name_workers_has_no_count(tmp_path):
     # A bare-name `workers:` names a role but no count → worker_count None (CLI/default wins).
     ev = tmp_path / "eval.yaml"
-    ev.write_text("app: rasp_dummy\ndevice: rasp_dummy\nworkers: dynamic\n", encoding="utf-8")
+    ev.write_text("app: rasp_dummy\ndevice: pixel\nworkers: dynamic\n", encoding="utf-8")
     assert load_run_config(ev).worker_count is None
 
 
@@ -405,7 +405,7 @@ def test_load_run_config_rejects_non_eval_config(tmp_path):
 def test_load_run_config_omitted_knobs_are_unset(tmp_path):
     # An eval config that sets no run knobs → an all-unset RunConfig (launcher defaults stand).
     ev = tmp_path / "eval.yaml"
-    ev.write_text("app: rasp_dummy\ndevice: rasp_dummy\n", encoding="utf-8")
+    ev.write_text("app: rasp_dummy\ndevice: pixel\n", encoding="utf-8")
     rc = load_run_config(ev)
     assert rc == RunConfig()
     assert rc.worker_count is None and rc.model is None

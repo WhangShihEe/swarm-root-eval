@@ -8,7 +8,7 @@
 #   python swarm.py        configs/evals/dbs.yaml --workers 3
 
 app: dbs            # -> configs/apps/dbs.yaml  (owns target_apk + the mission slots)
-device: dbs         # -> configs/devices/dbs.yaml  (provisioning only)
+device: pixel          # -> configs/devices/pixel.yaml  (shared provisioning-only emulator)
 
 # The worker roster: a list of {role, count}. Each role names configs/workers/<role>.yaml (the
 # role file's `notes` open the worker's mission — the 3-source prompt: role -> app -> device).

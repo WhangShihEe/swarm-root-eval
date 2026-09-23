@@ -682,6 +682,6 @@ def test_run_from_eval_config_acquires_device_and_forwards_target_apk(tmp_path):
                   FakeClock())
     assert result.verdict.value == "SUCCESS"
     assert broker.acquired_args == [
-        ("configs/devices/rasp_dummy.yaml", "--target-apk", "apks/rasp_dummy/rasp_dummy.apk"),
-        ("configs/devices/rasp_dummy.yaml", "--target-apk", "apks/rasp_dummy/rasp_dummy.apk"),
+        ("configs/devices/pixel.yaml", "--target-apk", "apks/rasp_dummy/rasp_dummy.apk"),
+        ("configs/devices/pixel.yaml", "--target-apk", "apks/rasp_dummy/rasp_dummy.apk"),
     ]

@@ -1,0 +1,24 @@
+# Device-spec: the shared provisioning-only emulator (yaml-config ticket 04). ONE device for every
+# eval — it describes only the emulator to boot (no app, no APK), and since the device is decoupled
+# from the app under test, every target uses this same profile. The broker/pool grants N identical
+# devices from this one spec (that is how a swarm of N workers gets N emulators), so there is no
+# need for a per-app device file. An eval that genuinely needs a different emulator (more RAM, a
+# different image/API) can add its own configs/devices/<name>.yaml and reference it instead.
+#   referenced by configs/evals/*.yaml (device: pixel)
+#
+# The bash bring-up layer (bin/_spec.sh, bin/_provision.sh) reads only the top-level provisioning
+# scalars below; the APK is handed to the device layer explicitly by the launcher (--target-apk).
+
+name: pixel                     # AVD name + adb tag (the pool creates one per slot from this spec)
+device_profile: pixel           # avdmanager -d <profile>
+system_image: "system-images;android-35;google_apis;arm64-v8a"
+api: "35"                       # env-up asserts config.ini target == android-35
+
+ram_mb: 4096                    # hw.ramSize
+cores: 4                        # hw.cpu.ncore
+data_size_mb: 8192              # disk.dataPartition.size
+
+provision: true
+frida: true
+normalize_settings: true
+headless: true                  # false -> boot with a visible window (or run env-up --window)

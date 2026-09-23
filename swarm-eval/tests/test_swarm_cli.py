@@ -122,7 +122,7 @@ def test_cli_workers_and_model_override_the_eval_config():
 def test_eval_config_without_run_knobs_falls_back_to_built_in_defaults(tmp_path):
     # An eval config that sets no run knobs → the SwarmConfig built-in defaults stand.
     ev = tmp_path / "bare.yaml"
-    ev.write_text("app: rasp_dummy\ndevice: rasp_dummy\nworkers: dynamic\n", encoding="utf-8")
+    ev.write_text("app: rasp_dummy\ndevice: pixel\nworkers: dynamic\n", encoding="utf-8")
     config = cli.build_config(cli.parse_args([str(ev)]))
     assert config.workers == 1
     assert config.model == cli.DEFAULT_MODEL

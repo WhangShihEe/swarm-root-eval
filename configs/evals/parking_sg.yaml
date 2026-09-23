@@ -8,7 +8,7 @@
 #   python swarm.py        configs/evals/parking_sg.yaml --workers 3
 
 app: parking_sg            # -> configs/apps/parking_sg.yaml  (owns target_apk + the mission slots)
-device: parking_sg         # -> configs/devices/parking_sg.yaml  (provisioning only)
+device: pixel          # -> configs/devices/pixel.yaml  (shared provisioning-only emulator)
 
 # The worker roster: a list of {role, count}. Each role names configs/workers/<role>.yaml (the
 # role file's `notes` open the worker's mission — the 3-source prompt: role -> app -> device).

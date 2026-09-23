@@ -8,7 +8,7 @@
 #   python swarm.py        configs/evals/cpf.yaml --workers 3
 
 app: cpf            # -> configs/apps/cpf.yaml  (owns target_apk + the mission slots)
-device: cpf         # -> configs/devices/cpf.yaml  (provisioning only)
+device: pixel          # -> configs/devices/pixel.yaml  (shared provisioning-only emulator)
 
 # The worker roster: a list of {role, count}. Each role names configs/workers/<role>.yaml (the
 # role file's `notes` open the worker's mission — the 3-source prompt: role -> app -> device).

@@ -83,19 +83,23 @@ by **concern**, and an eval config *references* the other three by bare name:
 |-----|------|------|---------|
 | [`configs/evals/`](configs/evals/) | `<name>.yaml` | the **run**: `app` / `device` / `workers` references + the run knobs (`model`, `limits`) | the launchers + `swarm_eval/target.py` |
 | [`configs/apps/`](configs/apps/) | `<name>.yaml` | the **app under test**: `target_apk`, `package`, `label`, `launch_activity`, and the mission slots (or `prompt:` → a [shared prompt](configs/apps/prompts/)) | the Python harness |
-| [`configs/devices/`](configs/devices/) | `<name>.yaml` | the **emulator** (provisioning only): `name`, `system_image`, `api`, `ram_mb`, `provision`, `frida`, `writable_system`, `headless`, … | the bash device layer (`bin/_spec.sh`) |
+| [`configs/devices/`](configs/devices/) | `pixel.yaml` | the **emulator** (provisioning only): `name`, `system_image`, `api`, `ram_mb`, `provision`, `frida`, `writable_system`, `headless`, … — **one shared spec** every eval references (the broker/pool grants N identical devices from it) | the bash device layer (`bin/_spec.sh`) |
 | [`configs/workers/`](configs/workers/) | `<role>.yaml` | the **worker role**: role `notes` that open the mission (today one role, `dynamic`) | the Python harness |
 
 The worker's mission is assembled by appending three note sources in order — **worker role → app
 → device** — around the app-agnostic operating manual, so no app is special-cased in code.
 
-**To point the probe at a new app:** drop its APK at `apks/<app>/<app>.apk`, add three files —
-`configs/apps/<app>.yaml` (the app + a `prompt:` reference), `configs/devices/<app>.yaml`
-(copy an existing one, change `name`), and `configs/evals/<app>.yaml` (reference them) — then:
+**To point the probe at a new app:** drop its APK at `apks/<app>/<app>.apk`, add two files —
+`configs/apps/<app>.yaml` (the app + a `prompt:` reference) and `configs/evals/<app>.yaml`
+(reference the app and the shared `device: pixel`) — then:
 
 ```bash
 uv run python single_agent.py configs/evals/<app>.yaml
 ```
+
+The device is shared, so a new app needs no new device file; only an app that genuinely needs a
+different emulator (more RAM, a different image/API) adds its own `configs/devices/<name>.yaml` and
+points its eval's `device:` at it.
 
 ### Run knobs: config defaults, CLI overrides
 
@@ -132,7 +136,7 @@ is a one-flag change.
 
 **Device-override whitelist.** An eval config may override **only** `writable_system` and
 `headless` from its device file (precedence **eval > device > built-in default**); every other
-device scalar stays fixed in `configs/devices/<name>.yaml`, the permission boundary between what an
+device scalar stays fixed in `configs/devices/pixel.yaml`, the permission boundary between what an
 eval author tunes per run and what is locked to the device.
 
 ## For coding agents

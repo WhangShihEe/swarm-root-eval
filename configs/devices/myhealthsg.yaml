@@ -1,0 +1,23 @@
+# Device-spec: provisioning-only emulator for the MyHealth SG target (yaml-config). Modeled on the
+# shared devices/pixel.yaml — same android-35 arm64 image and provisioning scalars — but named
+# myhealthsg so the target has its own device file per ticket 11. It describes only the emulator to
+# boot (no app, no APK); the APK is handed to the device layer explicitly by the launcher
+# (--target-apk). The broker/pool grants N identical devices from this one spec.
+#   referenced by configs/evals/myhealthsg.yaml (device: myhealthsg)
+#
+# The bash bring-up layer (bin/_spec.sh, bin/_provision.sh) reads only the top-level provisioning
+# scalars below.
+
+name: myhealthsg                # AVD name + adb tag (the pool creates one per slot from this spec)
+device_profile: pixel           # avdmanager -d <profile>
+system_image: "system-images;android-35;google_apis;arm64-v8a"
+api: "35"                       # env-up asserts config.ini target == android-35
+
+ram_mb: 4096                    # hw.ramSize
+cores: 4                        # hw.cpu.ncore
+data_size_mb: 8192              # disk.dataPartition.size
+
+provision: true
+frida: true
+normalize_settings: true
+headless: true                  # false -> boot with a visible window (or run env-up --window)

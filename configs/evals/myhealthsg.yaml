@@ -1,0 +1,34 @@
+# Eval config (yaml-config): the single file that fully specifies one replicable MyHealth SG run by
+# reference. It points at the app under test, the device to provision it on, and the worker roster
+# — each a bare name resolved under configs/{apps,devices,workers}/<name>.yaml — and carries the
+# RUN KNOBS as defaults (model, worker count, caps/budget/limits). Any CLI flag OVERRIDES the
+# matching config value for that run (CLI > config > built-in default):
+#   python single_agent.py configs/evals/myhealthsg.yaml                 # model+limits from here
+#   python swarm.py        configs/evals/myhealthsg.yaml                 # 1 worker (workers below)
+#   python swarm.py        configs/evals/myhealthsg.yaml --workers 3     # CLI overrides the count
+#
+# RUNTIME DEPENDENCY: this target needs the host backend up (OpenMRS `docker compose up` +
+# BFF `npm start` on :3000, reached from the emulator at http://10.0.2.2:3000). See
+# apks/myhealthsg/ORACLE.md.
+
+app: myhealthsg         # -> configs/apps/myhealthsg.yaml  (owns target_apk + the mission slots)
+device: myhealthsg      # -> configs/devices/myhealthsg.yaml  (android-35 arm64 emulator)
+
+# The worker roster: a list of {role, count}. Each role names configs/workers/<role>.yaml (the
+# role file's `notes` open the worker's mission — the 3-source prompt: role -> app -> device). The
+# total worker count is the sum of the counts; --workers overrides it for a run.
+workers:
+  - role: dynamic       # -> configs/workers/dynamic.yaml
+    count: 1
+
+# The served provider model the sandboxed Claude Code proxies to (the sweep lever). --model wins.
+model: anthropic/claude-sonnet-4-5-20250929
+
+# Caps / budget / limits (all optional; each overridable by the matching CLI flag). time_limit is
+# the per-run Inspect wall-clock cap (termination layer b); budget is the swarm launcher's hard
+# wall-clock; cap is the fail-fast worker ceiling (mirrors the broker cap). Raised over rasp_dummy
+# because this target has a multi-step exploit phase after the RASP bypass.
+limits:
+  time_limit: 3600      # per-run Inspect --time-limit (s)
+  budget: 5400          # swarm launcher hard wall-clock (s)
+  cap: 6                # max workers before fail-fast

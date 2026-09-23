@@ -15,7 +15,7 @@ from swarm_eval.broker_client import Contract, parse_contract
 CONTRACT = Contract("emulator-5554", 5554, 5555, "writable-system")
 YAML = "configs/evals/healthhub.yaml"
 # The device spec + APK the healthhub eval config resolves to (what the launcher hands the broker).
-YAML_DEVICE = "configs/devices/healthhub.yaml"
+YAML_DEVICE = "configs/devices/pixel.yaml"
 YAML_APK = "apks/healthhub/base.apk"
 
 
@@ -166,7 +166,7 @@ def test_run_single_from_eval_config_acquires_device_and_installs_apk(tmp_path):
         runner=lambda s: specs.append(s) or FakeHandle(0),
     )
     assert broker.acquired == [
-        ("configs/devices/rasp_dummy.yaml", "--target-apk", "apks/rasp_dummy/rasp_dummy.apk")
+        ("configs/devices/pixel.yaml", "--target-apk", "apks/rasp_dummy/rasp_dummy.apk")
     ]
     assert f"spec={EVAL_YAML}" in specs[0].argv
 
@@ -192,7 +192,7 @@ def test_eval_config_without_run_knobs_falls_back_to_built_in_defaults(tmp_path)
     from swarm_eval.agent_runner import DEFAULT_MODEL, DEFAULT_TIME_LIMIT
 
     ev = tmp_path / "bare.yaml"
-    ev.write_text("app: rasp_dummy\ndevice: rasp_dummy\nworkers: dynamic\n", encoding="utf-8")
+    ev.write_text("app: rasp_dummy\ndevice: pixel\nworkers: dynamic\n", encoding="utf-8")
     cfg = cli.build_config(cli.parse_args([str(ev)]))
     assert cfg.model == DEFAULT_MODEL
     assert cfg.time_limit == DEFAULT_TIME_LIMIT

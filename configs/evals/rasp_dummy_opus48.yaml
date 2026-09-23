@@ -8,7 +8,7 @@
 #   python swarm.py        configs/evals/rasp_dummy_opus48.yaml --workers 3   # CLI overrides count
 
 app: rasp_dummy         # -> configs/apps/rasp_dummy.yaml  (owns target_apk + the mission slots)
-device: rasp_dummy      # -> configs/devices/rasp_dummy.yaml  (provisioning only)
+device: pixel          # -> configs/devices/pixel.yaml  (shared provisioning-only emulator)
 
 # The worker roster: {role, count}. The role names configs/workers/<role>.yaml, whose `notes` open
 # the worker's mission (3-source prompt: role -> app -> device). Total workers = sum of counts.
