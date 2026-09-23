@@ -20,7 +20,7 @@ synthesis step, layered on top of the reader. 05 consumes `run_reader` unchanged
 
 **Blocked by:** 01 (the report reads the forum layout).
 
-**Status:** ready-for-agent
+**Status:** done (implemented; run_reader pure-parser + report.py out-of-process safetytooling synthesis; 310 passed; verified + merged)
 
 - [ ] Input-collation is a reusable, dependency-free `run_reader` module (no `safetytooling`, no model call) producing one typed run object; `report.py` layers synthesis on top of it, and ticket 05 consumes it unchanged.
 - [ ] `report.py <log-dir>` reads a finished run's forum, per-worker verdicts/transcripts, and arbiter verdict, and writes `logs/<swarm-id>/report.md`.
