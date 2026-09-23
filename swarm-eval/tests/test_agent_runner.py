@@ -11,6 +11,7 @@ from swarm_eval.agent_runner import (
     DEFAULT_WORKER_TASK,
     ENV_DEVICE_CONTRACT,
     ENV_INSPECT_LOG_DIR,
+    ENV_SERVED_MODEL,
     RunSpec,
     build_run_argv,
     build_run_env,
@@ -183,6 +184,17 @@ def test_build_run_env_merges_board_env_when_a_swarm(tmp_path):
     )
     assert env["SWARM_ID"] == "swarm-x" and env["AGENT_ID"] == "worker-1"
     assert env[ENV_DEVICE_CONTRACT] == str(tmp_path / "d.contract")
+
+
+def test_build_run_env_injects_the_served_model_when_given(tmp_path):
+    # Ticket 03: the launcher injects the served model it also passes as `--model`, so the run
+    # self-labels what Inspect bills instead of the CLI's built-in identity.
+    env = build_run_env(
+        contract_path=tmp_path / "d.contract",
+        log_dir=tmp_path / "r",
+        served_model="anthropic/claude-opus-4-8",
+    )
+    assert env[ENV_SERVED_MODEL] == "anthropic/claude-opus-4-8"
 
 
 # ---- contract file write -------------------------------------------------------------------

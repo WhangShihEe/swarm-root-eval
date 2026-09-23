@@ -57,6 +57,12 @@ from swarm_eval.mission import (
     extract_self_report,
 )
 from swarm_eval.model_filters import make_swarm_turn_filter, sweep_generate_filter
+from swarm_eval.served_model import (
+    METADATA_KEY as SERVED_MODEL_KEY,
+    cli_identity_for,
+    served_model,
+    stamp_served_model,
+)
 from swarm_eval.target import TargetConfig, load_target
 
 
@@ -217,7 +223,11 @@ def _role_mission_and_setup(
 
 
 def build_dynamic_task(
-    target: TargetConfig, *, time_limit: int = DEFAULT_TIME_LIMIT, role: str = ROLE_DYNAMIC
+    target: TargetConfig,
+    *,
+    time_limit: int = DEFAULT_TIME_LIMIT,
+    role: str = ROLE_DYNAMIC,
+    served_model_id: str | None = None,
 ) -> Task:
     """Build the agent Task for one resolved `TargetConfig` and `role`, in whichever mode the env
     selects (see the module docstring). The role (ticket 03) picks the mission and whether a device
@@ -228,18 +238,35 @@ def build_dynamic_task(
     `dynamic`), N× by the conductor across the roster.
 
     Everything app-specific comes from `target`: the mission text, the staged APK file-set, and
-    the device spec the broker acquires. Nothing here is app- or APK-specific."""
+    the device spec the broker acquires. Nothing here is app- or APK-specific.
+
+    The TRUE served model Inspect bills (`served_model_id`, injected by the launcher as
+    `SERVED_MODEL`, mirroring its `--model`) is stamped into the eval metadata so a transcript
+    reader is not misled by the sandboxed CLI's built-in self-identity (env-hardening ticket 03);
+    when that served model is itself a Claude id, the CLI's own `model_config` self-identity is
+    aligned to it too. Defaults to the env-injected value so `dynamic_agent()` needs no extra
+    plumbing; a test passes it explicitly."""
+    if served_model_id is None:
+        served_model_id = served_model()
     roster = parse_roster(os.environ.get(ENV_ROSTER, ""))
     mission, setup = _role_mission_and_setup(target, role, roster)
     solver_kwargs = dict(
         # version="sandbox": use the CC binary + toolchain baked into this image and fail loud
         # rather than downloading CC at runtime (now that the sandbox has host network, a silent
         # download could otherwise mask a broken image). Pairs with the Dockerfile (ticket 02).
-        model_config="claude-sonnet-4-5-20250929",
+        # model_config is the CLI's own self-identity: track the served model when it is a Claude id
+        # (so it stops asserting a wrong Claude identity), else keep the default and rely on the
+        # metadata stamp (ticket 03).
+        model_config=cli_identity_for(served_model_id),
         version="sandbox",
         filter=sweep_generate_filter,
     )
+    # Stamp the served model at build time (mirrors Inspect's `eval.model`); omitted when unknown
+    # so a run never asserts a WRONG model — the runtime `stamp_served_model` solver then fills it
+    # from the bound model instead.
     metadata: dict[str, str] = {}
+    if served_model_id:
+        metadata[SERVED_MODEL_KEY] = served_model_id
     if swarm_mode():
         agent_id = os.environ.get(ENV_AGENT_ID, "worker")
         worker_ids = [w for w in os.environ.get(ENV_WORKER_IDS, "").split(",") if w]
@@ -250,11 +277,12 @@ def build_dynamic_task(
         # hygiene the single path uses).
         solver_kwargs["bridged_tools"] = [forum_tools_spec(allow_done=False)]
         solver_kwargs["filter"] = make_swarm_turn_filter(agent_id)
-        metadata = {
+        # Merge (not replace) so the served-model stamp survives alongside the swarm coordinates.
+        metadata.update({
             "swarm_id": os.environ.get(ENV_SWARM_ID, ""),
             "agent_id": agent_id,
             "role": role,
-        }
+        })
     return Task(
         dataset=MemoryDataset([
             Sample(input=mission, target="SUCCESS", files=dict(target.files))
@@ -262,7 +290,10 @@ def build_dynamic_task(
         # `dynamic` stages + connects the leased device; `static`/`coordinator` have no device, so
         # no setup solver runs (the conductor injects no contract for them).
         setup=setup,
-        solver=claude_code(**solver_kwargs),
+        # Every role first stamps the TRUE served model into metadata (ticket 03) — the runtime
+        # safety net mirroring what Inspect bills even on a direct `inspect eval` with no
+        # launcher-injected `SERVED_MODEL` — then hands off to the bridged Claude Code agent.
+        solver=[stamp_served_model(), claude_code(**solver_kwargs)],
         scorer=self_report(),
         # Fail-fast: bound the sample (wall-clock, so a silent stall trips it too) so a hung/empty
         # provider errors out instead of pinning the scarce broker device through the whole retry

@@ -9,7 +9,12 @@ from pathlib import Path
 import pytest
 
 import single_agent as cli
-from swarm_eval.agent_runner import ENV_DEVICE_CONTRACT, ENV_INSPECT_LOG_DIR, RunSpec
+from swarm_eval.agent_runner import (
+    ENV_DEVICE_CONTRACT,
+    ENV_INSPECT_LOG_DIR,
+    ENV_SERVED_MODEL,
+    RunSpec,
+)
 from swarm_eval.broker_client import Contract, parse_contract
 
 CONTRACT = Contract("emulator-5554", 5554, 5555, "writable-system")
@@ -98,6 +103,8 @@ def test_run_single_leases_launches_then_releases(tmp_path):
     assert parse_contract(contract_file.read_text()) == CONTRACT
     assert ENV_INSPECT_LOG_DIR in spec.env
     assert "SWARM_ID" not in spec.env and "AGENT_ID" not in spec.env
+    # ticket 03: the run self-labels the served model (mirrors the config/--model it launches with).
+    assert spec.env[ENV_SERVED_MODEL] == _config(tmp_path).model
 
 
 def test_run_single_returns_the_run_exit_code(tmp_path):

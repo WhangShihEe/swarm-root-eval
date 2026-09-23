@@ -13,14 +13,17 @@ from swarm_eval.agent_runner import ENV_DEVICE_CONTRACT
 from swarm_eval.broker_client import Contract
 from swarm_eval.conductor import ENV_FORUM_DIR, ENV_ROLE, ENV_SWARM_ID, ENV_WORKER_IDS
 from swarm_eval.board_tools import ENV_AGENT_ID
+from swarm_eval.served_model import ENV_SERVED_MODEL
 
 
 @pytest.fixture(autouse=True)
 def _single_mode(monkeypatch):
     # These are the single-mode wiring tests: pin single mode so a swarm coordinate leaked by
     # another module (e.g. board_agent's `os.environ.setdefault(SWARM_ID, …)`) can't flip
-    # `swarm_mode()` on and make `build_dynamic_task` expect a forum.
-    for var in (ENV_SWARM_ID, ENV_FORUM_DIR, ENV_AGENT_ID, ENV_ROLE, ENV_WORKER_IDS):
+    # `swarm_mode()` on and make `build_dynamic_task` expect a forum. Also clear SERVED_MODEL so a
+    # value in the ambient env can't perturb the served-model stamp assertions.
+    for var in (ENV_SWARM_ID, ENV_FORUM_DIR, ENV_AGENT_ID, ENV_ROLE, ENV_WORKER_IDS,
+                ENV_SERVED_MODEL):
         monkeypatch.delenv(var, raising=False)
 
 CONTRACT = Contract(serial="emulator-5554", console_port=5554, adb_port=5555, profile="writable-system")
@@ -122,6 +125,70 @@ def test_build_dynamic_task_builds_from_targetconfig():
     assert t.time_limit == 321
     assert t.dataset[0].files == dict(target.files)
     assert t.setup is not None and t.scorer is not None
+
+
+# ---- ticket 03: the run self-labels the TRUE served model, not the CLI's built-in identity ----
+
+def test_build_dynamic_task_stamps_a_non_claude_served_model_into_metadata():
+    # The required metadata-path check: feed a NON-Claude configured served model through the
+    # builder and assert the stamped eval metadata equals it (mirroring what Inspect bills), so a
+    # transcript reader is not misled by the sandboxed CLI's built-in Sonnet-4.5 identity.
+    from swarm_eval.served_model import METADATA_KEY
+    from swarm_eval.target import load_target
+
+    target = load_target("configs/evals/rasp_dummy.yaml")
+    served = "openai-api/azure/qwen-2.5-72b-instruct"
+    t = da.build_dynamic_task(target, served_model_id=served)
+    assert t.metadata[METADATA_KEY] == served
+
+
+def test_build_dynamic_task_stamps_a_claude_served_model_into_metadata():
+    # A Claude served model (e.g. an Opus sweep run) is stamped verbatim too, so the metadata is
+    # correct regardless of vendor.
+    from swarm_eval.served_model import METADATA_KEY
+    from swarm_eval.target import load_target
+
+    target = load_target("configs/evals/rasp_dummy.yaml")
+    t = da.build_dynamic_task(target, served_model_id="anthropic/claude-opus-4-8")
+    assert t.metadata[METADATA_KEY] == "anthropic/claude-opus-4-8"
+
+
+def test_build_dynamic_task_defaults_served_model_from_the_injected_env(monkeypatch):
+    # In production the launcher injects SERVED_MODEL and the builder reads it with no extra
+    # plumbing (dynamic_agent() passes nothing).
+    from swarm_eval.served_model import ENV_SERVED_MODEL, METADATA_KEY
+    from swarm_eval.target import load_target
+
+    monkeypatch.setenv(ENV_SERVED_MODEL, "anthropic/claude-opus-4-8")
+    target = load_target("configs/evals/rasp_dummy.yaml")
+    assert da.build_dynamic_task(target).metadata[METADATA_KEY] == "anthropic/claude-opus-4-8"
+
+
+def test_build_dynamic_task_omits_the_stamp_when_served_model_unknown(monkeypatch):
+    # Unknown served model (no launcher, no env) → omit rather than assert a WRONG model; the
+    # runtime stamp solver fills it from the bound model instead.
+    from swarm_eval.served_model import ENV_SERVED_MODEL, METADATA_KEY
+    from swarm_eval.target import load_target
+
+    monkeypatch.delenv(ENV_SERVED_MODEL, raising=False)
+    target = load_target("configs/evals/rasp_dummy.yaml")
+    assert METADATA_KEY not in da.build_dynamic_task(target).metadata
+
+
+def test_build_dynamic_task_stamp_survives_swarm_metadata(monkeypatch, tmp_path):
+    # Swarm mode adds swarm/agent/role coordinates; the served-model stamp must survive alongside
+    # them (the metadata is merged, not replaced).
+    from swarm_eval.conductor import ENV_FORUM_DIR
+    from swarm_eval.served_model import METADATA_KEY
+    from swarm_eval.target import load_target
+
+    monkeypatch.setenv(ENV_SWARM_ID, "swarm-x")
+    monkeypatch.setenv(ENV_AGENT_ID, "worker-2")
+    monkeypatch.setenv(ENV_FORUM_DIR, str(tmp_path / "forum"))  # a swarm worker always has one
+    target = load_target("configs/evals/rasp_dummy.yaml")
+    t = da.build_dynamic_task(target, served_model_id="anthropic/claude-opus-4-8")
+    assert t.metadata[METADATA_KEY] == "anthropic/claude-opus-4-8"
+    assert t.metadata["swarm_id"] == "swarm-x" and t.metadata["agent_id"] == "worker-2"
 
 
 @pytest.mark.asyncio

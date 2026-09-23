@@ -22,6 +22,7 @@ from swarm_eval.conductor import (
     ROLE_DYNAMIC,
     ROLE_STATIC,
 )
+from swarm_eval.served_model import ENV_SERVED_MODEL
 
 CONTRACT = Contract("emulator-5554", 5554, 5555, "writable-system")
 CONTRACT_LINE = CONTRACT.render_contract_line()
@@ -47,7 +48,7 @@ def _state():
 def _clean_swarm_env(monkeypatch):
     # keep every test starting from single mode unless it opts into the forum coordinates
     for var in (ENV_DEVICE_CONTRACT, ENV_SWARM_ID, ENV_AGENT_ID, ENV_ROLE, ENV_WORKER_IDS,
-                ENV_ROSTER, ENV_FORUM_DIR):
+                ENV_ROSTER, ENV_FORUM_DIR, ENV_SERVED_MODEL):
         monkeypatch.delenv(var, raising=False)
 
 

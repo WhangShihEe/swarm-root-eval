@@ -104,7 +104,11 @@ def run_single(
             message_limit=config.message_limit,
         )
         # No board env → dynamic_agent runs in single mode (bare mission, no board tools).
-        env = build_run_env(contract_path=contract_path, log_dir=log_dir)
+        # `served_model` mirrors the `--model` above so the run self-labels what Inspect bills
+        # (ticket 03), instead of the sandboxed CLI's built-in identity.
+        env = build_run_env(
+            contract_path=contract_path, log_dir=log_dir, served_model=config.model
+        )
         logger.info("single %s: launching agent on device %s", run_id, contract.serial)
         handle = runner(RunSpec(argv=argv, env=env))
         rc = handle.wait()
