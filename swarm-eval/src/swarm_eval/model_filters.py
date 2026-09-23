@@ -26,7 +26,7 @@ from inspect_ai.model import (
 from inspect_ai.tool import ToolChoice, ToolInfo
 
 from .forum import Forum
-from .messageboard import Message
+from .messageboard import Message, TYPE_FINDING, TYPE_SUCCESS
 
 # Closed <think>…</think> / <thinking>…</thinking> blocks that some served models (Qwen3,
 # DeepSeek-R1, etc.) leak as literal TEXT instead of structured reasoning. Left in place they
@@ -182,21 +182,66 @@ def _dm_injection(dms: list[Message]) -> str:
     return "\n".join(lines)
 
 
-def make_swarm_turn_filter(agent_id: str, *, forum: Forum | None = None) -> Filter:
-    """Build the swarm worker's generate-filter: push this agent's unread DMs into its next turn,
-    then run the shared `sweep_generate_filter` hygiene (system-merge + reasoning-strip).
+# The high-signal message types the board-index push escalates above the `note`/`giveup` chatter,
+# so a peer's breakthrough isn't buried under routine notes. Kept in taxonomy order (success then
+# finding) so the ranking is stable regardless of the order posts happened to land in.
+_HIGH_SIGNAL = (TYPE_SUCCESS, TYPE_FINDING)
 
-    This is the ticket-01 "turn-injection plumbing" ticket 02 reuses: each turn it reads the DMs
-    delivered to `agent_id` since the last one it injected (a per-run cursor held in the closure —
-    the filter runs host-side in the worker's own process), appends them as a fresh user message
-    so a targeted DM reaches the recipient without it having to poll, and advances the cursor so
-    each DM is pushed exactly once. The injected message is not persisted into the bridge's
-    transcript, so it never re-accumulates; the agent can re-fetch with `read_inbox`.
+
+def _board_index_injection(entries: list[dict[str, str]]) -> str | None:
+    """The user-message text that carries the unread board **index** into a turn — subjects only,
+    ranked BELOW the DM section (ticket 02). Bodies stay pull-on-demand (`read_message(ids)`) so a
+    long board never force-feeds context. `success`/`finding` posts are surfaced in a prominent
+    high-signal block above the routine `note`/`giveup` chatter, so a peer's breakthrough isn't
+    buried. `entries` is the `Board.list` index view (`{id, subject, author, ts, type}`) of what is
+    unread for this agent; returns None when there is nothing to show (so the caller can skip it)."""
+    if not entries:
+        return None
+    high = [e for e in entries if e["type"] in _HIGH_SIGNAL]
+    low = [e for e in entries if e["type"] not in _HIGH_SIGNAL]
+    lines = [
+        "[FORUM · board] New message(s) posted to the shared board since you last looked "
+        "(subjects only — pull a full body with `read_message(ids)`). Consult these before "
+        "duplicating a peer's work:"
+    ]
+    if high:
+        lines.append("  High-signal — a peer's finding/success, read these first:")
+        for e in high:
+            lines.append(f"  ★ [{e['type']}] {e['id']} — from {e['author']}: {e['subject']}")
+    if low:
+        lines.append("  Other notes:")
+        for e in low:
+            lines.append(f"  · [{e['type']}] {e['id']} — from {e['author']}: {e['subject']}")
+    return "\n".join(lines)
+
+
+def make_swarm_turn_filter(agent_id: str, *, forum: Forum | None = None) -> Filter:
+    """Build the swarm worker's generate-filter: push this agent's unread DMs AND the unread board
+    index into its next turn, then run the shared `sweep_generate_filter` hygiene (system-merge +
+    reasoning-strip).
+
+    Two turn-injections, folded into ONE trailing user message so the turn stays coherent, with the
+    DMs ranked above the board index (a DM is targeted at this agent; the board is broadcast):
+
+    - **DMs (ticket 01)** — the DMs delivered to `agent_id` since the last turn it injected, as
+      full bodies (DMs are low-volume and targeted), so a targeted message reaches the recipient
+      without it having to poll.
+    - **Board index (ticket 02)** — the *subjects only* of board messages posted since this agent
+      last saw the board, with `success`/`finding` surfaced above `note`/`giveup`, so N runs read
+      and react to each other instead of degenerating into N independent runs. Bodies stay
+      pull-on-demand (`read_message(ids)`) to keep context clean, and the agent's OWN posts are
+      skipped (it already knows them) though the cursor still advances past them.
+
+    Each stream has its own per-run deliver-once cursor held in the closure (the filter runs
+    host-side in the worker's own process), advanced so each DM/board message is pushed exactly
+    once. The injected message is not persisted into the bridge's transcript, so it never
+    re-accumulates; the agent can re-fetch with `read_inbox` / `list_messages`.
 
     `forum` defaults to `Forum.from_env()` — the conductor injects `FORUM_DIR`.
     """
     forum = forum or Forum.from_env()
-    last: str | None = None  # deliver-once cursor: the id of the last DM already pushed
+    last_dm: str | None = None      # deliver-once cursor: id of the last DM already pushed
+    last_board: str | None = None   # deliver-once cursor: id of the last board post already seen
 
     async def swarm_turn_filter(
         model: Model,
@@ -205,12 +250,26 @@ def make_swarm_turn_filter(agent_id: str, *, forum: Forum | None = None) -> Filt
         tool_choice: ToolChoice | None,
         config: GenerateConfig,
     ) -> ModelOutput | GenerateInput | None:
-        nonlocal last
-        dms = forum.read_dms(agent_id, since=last)
-        prepared = list(messages)
+        nonlocal last_dm, last_board
+        sections: list[str] = []
+
+        dms = forum.read_dms(agent_id, since=last_dm)
         if dms:
-            last = dms[-1].id
-            prepared = [*messages, ChatMessageUser(content=_dm_injection(dms))]
+            last_dm = dms[-1].id
+            sections.append(_dm_injection(dms))
+
+        index = forum.board.list(since=last_board)
+        if index:
+            # Advance the cursor past every new post (including this agent's own) so nothing is
+            # pushed twice; but only a PEER's posts are shown — an agent needn't be told its own.
+            last_board = index[-1]["id"]
+            board_text = _board_index_injection([e for e in index if e["author"] != agent_id])
+            if board_text:
+                sections.append(board_text)
+
+        prepared = list(messages)
+        if sections:
+            prepared = [*messages, ChatMessageUser(content="\n\n".join(sections))]
         return await sweep_generate_filter(model, prepared, tools, tool_choice, config)
 
     return swarm_turn_filter

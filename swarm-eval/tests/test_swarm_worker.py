@@ -90,6 +90,18 @@ def test_swarm_prompt_names_identity_peers_board_and_protocol():
     assert "done" in prompt and "success" in prompt and "giveup" in prompt
 
 
+def test_swarm_prompt_nudges_post_and_read_before_duplicating():
+    # ticket 02: the mission nudge — tell the agent to post findings/successes and to consult the
+    # board before duplicating work, and that the unread board index is pushed into its turn.
+    prompt = da.swarm_prompt("BASE", "worker-1", ["worker-1", "worker-2"])
+    low = prompt.lower()
+    assert "finding" in low and "success" in low       # post these
+    assert "duplicat" in low                            # …before duplicating a peer's work
+    # the board index (not just DMs) is auto-pushed each turn — the ticket-02 nudge names it so
+    # the agent understands the injected index and reads it before starting work.
+    assert "board index" in low
+
+
 # ---- task wiring per mode ------------------------------------------------------------------
 
 def test_task_single_has_no_swarm_metadata():
