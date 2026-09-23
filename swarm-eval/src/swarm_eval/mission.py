@@ -98,6 +98,19 @@ Tools baked into this sandbox (this is the exact set — nothing else is install
     any Java call that touches the app's UI/main thread must be posted to it with
     `Java.scheduleOnMainThread(() => {{ /* ... */ }})` — invoking UI work from the frida agent's
     own thread can deadlock the frida session (`script.load()` hangs / transport timeout).
+    RESIDENT MODE (`-k/--keep-alive`): by default the session is torn down the instant your agent
+    sends `done` — so the hook is gone before the app exercises it. If you need the hook to STAY
+    LIVE while you do something else (drive the app's UI over adb/uiautomator, capture its
+    traffic, wait for a guarded check to fire), pass `-k`: a `done` is then printed but does NOT
+    end the session, and the hook holds until you kill the runner (`-t 0` = hold until signalled).
+    Run it BACKGROUNDED so your shell stays free — `frida-run -f <package> -l /tmp/agent.js -k -t 0
+    &` — then drive the app against the live hook and `kill %1` when finished. AUTO-FOREGROUND: a
+    `-f` spawn is resumed but has no foreground activity, so Android's cached-apps freezer freezes
+    it and the hooked check never runs; `frida-run` therefore brings a spawned app to the
+    foreground for you (activity-manager `am start`, resolving the launch activity, so the check
+    actually fires). Pass `--activity <pkg>/<activity>` to name the component, or `--no-foreground`
+    to opt out. Prefer spawn + `-k` + auto-foreground whenever the bypass must be observed on the
+    live UI (not just installed).
   - `objection` — the fast path (its bundled agent already carries the bridge, so it works on
     frida 17). Non-interactive form (feed EOF so it doesn't hang on the REPL):
     `echo exit | objection -g <package> explore --startup-command "android root disable"`.
