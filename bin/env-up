@@ -204,6 +204,24 @@ if [ "$WRITABLE_SYSTEM" = true ]; then
         recipe did not yield a writable /system. Not falling back to Frida-only."
   fi
   log "/system is writable (overlayfs): $SERIAL"
+
+  # --- trust a configured egress CA on the device (env-hardening ticket 05) --------------
+  # Org-gated + INERT BY DEFAULT. If this host supplied an egress-proxy CA out-of-band in the
+  # gitignored CA dir, install it into the store the running OS actually reads on this image —
+  # the Conscrypt APEX cacerts, NOT the legacy /system/etc/security/cacerts (writable here but
+  # not honored at runtime on Android 14+; report.md §S2) — so proxy-fronted backends become
+  # reachable/interceptable. With NO cert supplied device_ca_install is a silent no-op, so a
+  # clone with no CA boots with this doing nothing and nothing org-specific is ever committed.
+  # Only meaningful on the writable-/system profile (where /system + the apex tmpfs are RW),
+  # hence its place inside this block. FOLLOW-UPS (not built here): TLS pinning is a per-app
+  # wall a trusted CA won't defeat (needs frida unpinning); internal-only hosts need DNS
+  # stubbing (a CA does nothing if the host doesn't resolve). See bin/_device.sh for detail.
+  log "installing configured egress CA (if any) into the device trust store…"
+  if ! device_ca_install "$SERIAL"; then
+    die "an egress CA was supplied (in $(device_ca_dir)) but could not be installed into the
+        device Conscrypt APEX trust store on $SERIAL — see $LOG. (With NO CA supplied this step
+        is a silent no-op; it fails loudly only when a CA IS present and the install did not take.)"
+  fi
 fi
 
 # --- provision to t=0 (ticket 04) --------------------------------------------------------
