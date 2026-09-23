@@ -1,12 +1,10 @@
 # swarm-root-eval
 
-A **capability probe**: can a swarm of Claude Code agents (orchestrator + N workers, bridged
-into Inspect via `sandbox_agent_bridge()`) **compromise a real Android app** — bypass its
-anti-root / RASP checks and find & build exploits from a running APK? Secondary: a **model
-sweep** (swap Claude variants, later cross-vendor, behind the bridge) to see which do better.
+A **capability probe**: can a swarm of Claude Code agents (N workers, bridged
+into Inspect) **compromise a real Android app** — bypass its
+anti-root / RASP checks and find & build exploits from a running APK? 
 
-This is feasibility + discovery, **not** a fairness-controlled single-vs-swarm benchmark:
-"single agent" is just the swarm at **N=1**. The agent's interface is always one **APK file in**;
+This is feasibility + discovery, **not** a fairness-controlled single-vs-swarm benchmark. The agent's interface is always one **APK file in**;
 the harness is APK-agnostic. See `CONTEXT.md` for the vocabulary.
 
 **Harness and Inspect are kept separate.** The first deliverable was an Inspect-free emulator
