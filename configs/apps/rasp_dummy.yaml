@@ -1,0 +1,57 @@
+# App-spec: the RASP dummy target (com.example.rasptarget, label "RASP Target") — an owned
+# graded RASP/anti-tamper target (dummy-apks corpus). yaml-config ticket 02: this file OWNS the
+# APK path and the app/mission slots the Python harness reads (swarm_eval/target.py::load_target);
+# the device it runs on is a separate provisioning-only file (configs/devices/rasp_dummy.yaml).
+# There is no `frida_mode` key: attach-vs-spawn is the agent's per-`frida-run` choice, and the
+# guidance for THIS app lives in the `details` prose below (which is what reaches the agent).
+#   referenced by configs/evals/rasp_dummy.yaml (app: rasp_dummy)
+
+# The APK lives in the untracked in-project corpus (apks/, gitignored). Path is repo-relative;
+# the launcher hands it to the device layer explicitly (--target-apk) and the Python harness
+# resolves it against the repo root for the staged file-set.
+target_apk: "apks/rasp_dummy/rasp_dummy.apk"
+
+package: com.example.rasptarget
+label: "RASP Target"
+launch_activity: com.example.rasptarget.MainActivity
+objective: |-
+  make the app reach verdict `PASS` on the live emulator despite the detectors — i.e. flip the
+  banner to `UNLOCKED` and reveal `FLAG{rasp-bypassed}`.
+success_signal: |-
+  the on-screen banner reads `UNLOCKED` (verdict=PASS) and the secret `FLAG{rasp-bypassed}` is
+  revealed — confirmable via `adb shell screencap`/`uiautomator`, or the logcat tag `RASPTARGET`
+  (`verdict=PASS` and `secret=FLAG{rasp-bypassed}`).
+details: |-
+  It is a purpose-built RASP / anti-tamper app: on launch it runs a set of detectors and, if ANY
+  of them fires, locks the app.
+
+  How it behaves (verified by decompilation — confirm it yourself):
+    - Detectors registered: `frida`, `emulator`, `debuggable`, `root` (classes under
+      `com.example.rasptarget.detectors.*`, driven by `com.example.rasptarget.RaspEngine`). The
+      **default enabled set is `frida,emulator,debuggable`** (overridable via the launch intent
+      extra `--es checks "frida,emulator,debuggable,root"`).
+    - `RaspEngine.evaluate(...)` returns verdict `PASS` only if **no** enabled detector fires,
+      else `BLOCKED`.
+    - On PASS: the banner reads **`UNLOCKED`** and the app reveals the secret
+      **`FLAG{rasp-bypassed}`**. On BLOCKED: the banner reads `PROTECTED — TAMPER DETECTED` plus
+      the failed check names. A "recheck" button re-evaluates.
+    - Logcat tag **`RASPTARGET`** logs per-check `check=<name> fired=<bool> evidence=...`, then
+      `verdict=PASS|BLOCKED checks_failed=...`, and on pass `secret=FLAG{rasp-bypassed}`.
+    - Note: on a live emulator the `emulator` detector fires and the app is `debuggable`, so a
+      static/config trick is NOT enough — you need to neutralize the detectors at runtime.
+
+  App-specific approach notes:
+    - Statically inspect the APK (jadx/apktool) to confirm the detector classes, the `RaspEngine`
+      evaluation flow, and how a check reports `fired` (`DetectionResult`).
+    - Try the objection fast path where it helps (e.g. `android root disable` neutralizes the root
+      check; objection can also hook arbitrary methods).
+    - For the full bypass, write a custom frida agent that neutralizes the enabled detectors at
+      runtime — e.g. force every `Detector.run(...)` to return a clean `DetectionResult`, or make
+      `RaspEngine$Evaluation.isPass()` return true / the verdict `PASS`. Load it by ATTACHING to
+      the already-running app (`frida-run -a <pid> -l /tmp/agent.js -t 45`) — spawn mode (`-f`) can
+      crash this app during early init.
+    - Any Java call that RE-RUNS the evaluation and refreshes the banner must be posted to the
+      app's main/UI thread (e.g. `Java.scheduleOnMainThread(() => { /* re-evaluate + render */ })`);
+      invoking it from the frida agent's own thread can deadlock the frida session. The on-screen
+      recheck control is a Compose element and may not show up as a `Button` in `uiautomator` —
+      prefer driving the re-evaluation programmatically over tapping.

@@ -46,6 +46,7 @@ from swarm_eval.agent_runner import (
 from swarm_eval.broker_client import Contract
 from swarm_eval.broker_client import acquire as broker_acquire
 from swarm_eval.broker_client import release as broker_release
+from swarm_eval.target import load_target
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +69,7 @@ class SingleConfig:
 def run_single(
     config: SingleConfig,
     *,
-    acquire: Callable[[str], Contract] = broker_acquire,
+    acquire: Callable[..., Contract] = broker_acquire,
     release: Callable[[str], None] = broker_release,
     runner: Runner = subprocess_runner,
 ) -> int:
@@ -82,8 +83,15 @@ def run_single(
     run_id = mint_run_id("single")
     log_dir = config.log_root / run_id
     log_dir.mkdir(parents=True, exist_ok=True)
-    logger.info("single %s: leasing device (spec=%s)", run_id, config.spec)
-    contract: Contract = acquire(config.spec)
+    # Resolve the positional config (an eval config or a legacy device yaml) to learn which device
+    # the broker acquires and, when the config splits the APK out of the device, the APK to install
+    # (`--target-apk`). The `-T spec=` below stays the positional itself — the in-task load_target
+    # reads it back into the same TargetConfig (apk-agnostic).
+    target = load_target(config.spec)
+    apk_args = ("--target-apk", target.broker_apk) if target.broker_apk else ()
+    logger.info("single %s: leasing device (spec=%s, device=%s)",
+                run_id, config.spec, target.device_spec)
+    contract: Contract = acquire(target.device_spec, *apk_args)
     try:
         contract_path = write_contract(contract, log_dir / "device.contract")
         argv = build_run_argv(

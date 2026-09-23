@@ -1,0 +1,11 @@
+# Eval config (yaml-config ticket 02): the single file that names one replicable run by reference.
+# It points at the app under test, the device to provision it on, and the worker role — each a
+# bare name resolved under configs/{apps,devices,workers}/<name>.yaml (a path or *.yaml value is
+# also accepted). Run knobs (model, worker count, caps, limits) are still CLI flags in ticket 02;
+# ticket 03 folds those defaults in here too.
+#   python single_agent.py configs/evals/rasp_dummy.yaml
+#   python swarm.py        configs/evals/rasp_dummy.yaml --workers 3
+
+app: rasp_dummy         # -> configs/apps/rasp_dummy.yaml  (owns target_apk + the mission slots)
+device: rasp_dummy      # -> configs/devices/rasp_dummy.yaml  (provisioning only)
+workers: dynamic        # -> configs/workers/dynamic.yaml  (the worker role)

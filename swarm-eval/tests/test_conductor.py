@@ -655,3 +655,31 @@ def test_run_logs_acquire_progress_per_device(tmp_path, caplog):
     msgs = [r.getMessage() for r in caplog.records]
     assert any("acquiring device 1/2" in m for m in msgs)
     assert any("acquiring device 2/2" in m for m in msgs)
+
+
+# ---- yaml-config ticket 02: acquiring from an eval config ----------------------------------
+
+class FakeSpecBroker(FakeBroker):
+    """A FakeBroker that also records the full acquire argv (spec + forwarded env-up args)."""
+
+    def __init__(self, fail_on=None):
+        super().__init__(fail_on=fail_on)
+        self.acquired_args: list[tuple] = []
+
+    def acquire(self, spec: str, *extra: str):
+        self.acquired_args.append((spec, *extra))
+        return super().acquire(spec)
+
+
+def test_run_from_eval_config_acquires_device_and_forwards_target_apk(tmp_path):
+    # A swarm launched from an eval config hands the broker the provisioning-only DEVICE spec plus
+    # the app's APK (--target-apk); the workers' `-T spec=` stays the eval config itself.
+    config = cfg(tmp_path, workers=2, spec="configs/evals/rasp_dummy.yaml")
+    broker = FakeSpecBroker()
+    result = _run(config, broker, make_runner({"worker-1": "success", "worker-2": "success"}),
+                  FakeClock())
+    assert result.verdict.value == "SUCCESS"
+    assert broker.acquired_args == [
+        ("configs/devices/rasp_dummy.yaml", "--target-apk", "apks/rasp_dummy/rasp_dummy.apk"),
+        ("configs/devices/rasp_dummy.yaml", "--target-apk", "apks/rasp_dummy/rasp_dummy.apk"),
+    ]

@@ -2,13 +2,10 @@
 
 Proves the two shipped targets render through a single template: the target-agnostic boilerplate
 (device connect + exact toolchain + verdict format) is byte-identical across them, while the app
-slots differ. `frida_mode` is a runtime device knob only — after the mode guidance was dropped
-from the prompt, it no longer changes the rendered mission. Plus the (unchanged) self-report
-verdict extraction. Pure — no broker, no corpus: `load_target` reads only the yaml (the split
-file-set is not needed to render a mission).
+slots differ. Attach-vs-spawn never enters the prompt (it is the agent's runtime choice). Plus
+the (unchanged) self-report verdict extraction. Pure — no broker, no corpus: `load_target` reads
+only the yaml (the split file-set is not needed to render a mission).
 """
-
-import dataclasses
 
 from swarm_eval.mission import (
     VERDICT_TOKEN,
@@ -20,8 +17,8 @@ from swarm_eval.mission import (
 from swarm_eval.target import load_target
 
 CONTRACT = "/root/device-contract.env"
-RASP = load_target("devices/rasp_dummy.yaml")        # frida_mode: attach, single APK
-HEALTHHUB = load_target("devices/healthhub.yaml")    # frida_mode: spawn, split set
+RASP = load_target("devices/rasp_dummy.yaml")        # single APK
+HEALTHHUB = load_target("devices/healthhub.yaml")    # split set
 
 
 def test_build_mission_fills_app_slots_from_target():
@@ -74,19 +71,6 @@ def test_app_slots_differ_across_targets():
     assert HEALTHHUB.objective in hh and HEALTHHUB.objective not in rasp
 
 
-def test_frida_mode_does_not_leak_into_mission():
-    # The mode guidance was removed from the prompt: frida_mode is now a runtime device knob only
-    # and MUST NOT change the rendered mission. This guards the cold design — two targets differing
-    # ONLY in frida_mode render byte-for-byte identically, and the removed spawn-only guidance
-    # ("reproduce the crash first") no longer appears. (Tool-manual examples like `frida-run -f`
-    # remain — those are usage of the baked runner, not spawn-vs-attach method guidance.)
-    spawn = dataclasses.replace(RASP, frida_mode="spawn")
-    attach = dataclasses.replace(RASP, frida_mode="attach")
-    m_spawn = build_mission(spawn, contract_path=CONTRACT)
-    assert m_spawn == build_mission(attach, contract_path=CONTRACT)
-    assert "Reproduce the failure FIRST" not in m_spawn
-
-
 def test_extract_self_report_success():
     out = "I bypassed the check.\n" + VERDICT_TOKEN + ": SUCCESS\nevidence: ...\n"
     assert extract_self_report(out) == "SUCCESS"
@@ -104,3 +88,11 @@ def test_extract_self_report_case_and_space_insensitive():
 
 def test_extract_self_report_absent_is_none():
     assert extract_self_report("no verdict here") is None
+
+
+def test_eval_config_mission_matches_legacy():
+    # yaml-config ticket 02: the rasp_dummy mission renders equivalently from the new eval config
+    # and the legacy combined yaml — the split moved fields between files, not their content.
+    ev = build_mission(load_target("configs/evals/rasp_dummy.yaml"), contract_path=CONTRACT)
+    legacy = build_mission(RASP, contract_path=CONTRACT)
+    assert ev == legacy

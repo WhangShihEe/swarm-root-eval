@@ -60,6 +60,7 @@ from .messageboard import (
     Board,
     board_dir,
 )
+from .target import load_target
 
 logger = logging.getLogger(__name__)
 
@@ -292,7 +293,7 @@ class Conductor:
         config: SwarmConfig,
         *,
         runner: Runner = agent_runner.subprocess_runner,
-        acquire: Callable[[str], Contract] = broker_acquire,
+        acquire: Callable[..., Contract] = broker_acquire,
         release: Callable[[str], None] = broker_release,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
@@ -376,13 +377,18 @@ class Conductor:
         Each `acquire` **blocks** while the broker cold-boots + provisions that device (up to its
         900s timeout), so a per-device heartbeat is logged before and after each one (05d) —
         otherwise the launcher looks hung for minutes with N workers."""
+        # Resolve the positional config once (an eval config or a legacy device yaml): which
+        # device each acquire leases and, when the config splits the APK out, which APK to install
+        # (`--target-apk`). The workers' `-T spec=` stays the positional itself (build_run_argv).
+        target = load_target(self.config.spec)
+        apk_args = ("--target-apk", target.broker_apk) if target.broker_apk else ()
         specs: list[RunSpec] = []
         total = len(worker_ids)
         for i, agent_id in enumerate(worker_ids, start=1):
             logger.info("swarm %s: acquiring device %d/%d (booting + provisioning)…",
                         swarm_id, i, total)
             started = self._clock()
-            contract = self._acquire(self.config.spec)
+            contract = self._acquire(target.device_spec, *apk_args)
             acquired.append(contract.serial)
             logger.info("swarm %s: %s ← %s (%.0fs)",
                         swarm_id, agent_id, contract.serial, self._clock() - started)

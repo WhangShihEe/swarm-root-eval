@@ -2,13 +2,14 @@
 
 ONE generic mission template, filled from a `TargetConfig` (apk-agnostic refactor, ticket 02):
 every target — the RASP toy, HealthHub, any future APK — runs through this one `build_mission`;
-the only difference between two targets is their `devices/<name>.yaml`. The target-agnostic
+the only difference between two targets is their config (an eval config or a legacy device yaml,
+resolved by `target.load_target`). The target-agnostic
 boilerplate (how to reach the broker device, the exact baked toolchain, the frida-17 bridge
 workflow, the verdict format) renders **byte-identically** for every target; the app-specific
 slots (label, package, launch activity, objective, success signal, details) come only from the
-`TargetConfig`. A spec supplies those slots inline or via a shared `devices/prompts/<name>.yaml`
-(see `target.load_target`). `target.frida_mode` is a runtime device knob only — it no longer
-shapes the prompt.
+`TargetConfig`. A spec supplies those slots inline or via a shared prompt file
+(see `target.load_target`). Attach-vs-spawn is the agent's per-`frida-run` runtime choice and
+never shapes the prompt — the app's own `details` prose carries any per-app guidance.
 
 The oracle is the MVP **self-report** (spec: "Oracle = self-report MVP + manual verification").
 The agent is instructed to end with a machine-readable verdict line; the scorer extracts it. A
@@ -127,8 +128,8 @@ def build_mission(target: TargetConfig, *, contract_path: str) -> str:
     connect helper, and the exact static+dynamic toolchain, and fixes the self-report format the
     oracle reads. rasp and healthhub (and any future APK) render through this single path — the
     only difference is their yaml: the `_device_and_tools` / `_verdict_block` boilerplate is
-    byte-identical across targets and the app slots come from `target`. (`target.frida_mode` is a
-    runtime device knob only; it no longer injects any guidance into the prompt.)"""
+    byte-identical across targets and the app slots come from `target`. (Attach-vs-spawn is the
+    agent's runtime choice; it never injects any guidance into the prompt.)"""
     return "\n\n".join([
         _briefing(target),
         _device_and_tools(contract_path),

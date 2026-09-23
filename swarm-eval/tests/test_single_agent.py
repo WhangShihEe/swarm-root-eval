@@ -127,3 +127,52 @@ def test_main_wires_args_to_run_single_and_returns_its_code(tmp_path, monkeypatc
     assert cli.main([YAML, "--log-dir", str(tmp_path / "l")]) == 7
     assert captured["config"].spec == YAML
     assert captured["config"].log_root == tmp_path / "l"
+
+
+# ---- yaml-config ticket 02: launching from an eval config ----------------------------------
+
+EVAL_YAML = "configs/evals/rasp_dummy.yaml"
+
+
+class FakeApkBroker:
+    """Records the full acquire argv (spec + any forwarded env-up args like --target-apk)."""
+
+    def __init__(self):
+        self.acquired: list[tuple] = []
+        self.released: list[str] = []
+
+    def acquire(self, spec: str, *extra: str) -> Contract:
+        self.acquired.append((spec, *extra))
+        return CONTRACT
+
+    def release(self, serial: str) -> None:
+        self.released.append(serial)
+
+
+def test_run_single_from_eval_config_acquires_device_and_installs_apk(tmp_path):
+    # An eval config splits the APK out of the device file, so the launcher hands the broker the
+    # provisioning-only DEVICE spec plus the app's APK via --target-apk. The worker's `-T spec=`
+    # stays the eval config itself (the in-task load_target resolves it back).
+    broker = FakeApkBroker()
+    specs: list[RunSpec] = []
+    cli.run_single(
+        _config(tmp_path, spec=EVAL_YAML),
+        acquire=broker.acquire, release=broker.release,
+        runner=lambda s: specs.append(s) or FakeHandle(0),
+    )
+    assert broker.acquired == [
+        ("configs/devices/rasp_dummy.yaml", "--target-apk", "apks/rasp_dummy/rasp_dummy.apk")
+    ]
+    assert f"spec={EVAL_YAML}" in specs[0].argv
+
+
+def test_run_single_legacy_yaml_acquires_the_positional_with_no_target_apk(tmp_path):
+    # A legacy combined yaml: the broker acquires the SAME positional and sources the APK itself —
+    # no --target-apk forwarded (no regression for the not-yet-migrated targets).
+    broker = FakeApkBroker()
+    cli.run_single(
+        _config(tmp_path, spec=YAML),
+        acquire=broker.acquire, release=broker.release,
+        runner=lambda s: FakeHandle(0),
+    )
+    assert broker.acquired == [(YAML,)]

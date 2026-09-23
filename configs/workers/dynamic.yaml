@@ -1,0 +1,10 @@
+# Worker role: the dynamic agent (yaml-config ticket 02). One role today; an eval config
+# references it by name (workers: dynamic). ticket 03 folds the `notes` below into the worker's
+# mission prompt (the 3-source concatenation: worker role -> app -> device) and lets an eval
+# request N of this role via `workers: [{role: dynamic, count: N}]`.
+role: dynamic
+notes: |-
+  You are a dynamic-analysis agent: you have a live, rooted emulator and the full offensive
+  toolchain (adb, frida, objection, jadx, apktool). Prefer confirming behaviour on the running
+  device over static inference alone, and drive every tool non-interactively (one-shot adb, the
+  `frida-run` runner, EOF-fed objection) so nothing blocks on a REPL.

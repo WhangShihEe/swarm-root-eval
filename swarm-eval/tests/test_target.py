@@ -1,9 +1,11 @@
-"""APK-agnostic refactor, ticket 01 — the device-yaml -> TargetConfig loader (pure).
+"""The config -> TargetConfig loader (pure). Covers the legacy combined device yamls (ticket 01)
+and the eval-config split (yaml-config ticket 02).
 
-Proves `load_target` on both shipped device yamls: rasp -> single-APK file-set + its app
-fields; healthhub -> split-set file-set (base + splits) + its app fields + frida_mode spawn.
-The healthhub split-count assertions read the untracked apks/ corpus; they skip cleanly when
-it is absent (CI without the corpus), while path/field assertions run regardless.
+Proves `load_target` on both shipped legacy device yamls: rasp -> single-APK file-set + its app
+fields; healthhub -> split-set file-set (base + splits) + its app fields. The healthhub
+split-count assertions read the untracked apks/ corpus; they skip cleanly when it is absent (CI
+without the corpus), while path/field assertions run regardless. The eval-config cases at the
+bottom prove the new shape resolves the app + device references and reproduces the legacy split.
 """
 
 import os
@@ -12,9 +14,10 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 from swarm_eval.broker_client import repo_root
-from swarm_eval.target import DEFAULT_FRIDA_MODE, load_target
+from swarm_eval.target import load_target
 
 RASP_SPEC = "devices/rasp_dummy.yaml"
 HEALTHHUB_SPEC = "devices/healthhub.yaml"
@@ -41,7 +44,6 @@ def test_load_target_rasp_single_apk():
     assert t.package == "com.example.rasptarget"
     assert t.label == "RASP Target"
     assert t.launch_activity == "com.example.rasptarget.MainActivity"
-    assert t.frida_mode == "attach"
     assert t.objective and "PASS" in t.objective
     assert t.success_signal and "FLAG{rasp-bypassed}" in t.success_signal
     # the app-specific detail carried verbatim from the old hardcoded prompt
@@ -71,10 +73,9 @@ def test_load_target_healthhub_split_set():
     assert set(t.files) == {f"/root/{n}" for n in names}
     assert all(Path(p).is_absolute() for p in t.files.values())
 
-    # app fields — spawn mode; the mission slots are populated (prompt-agnostic: healthhub.yaml
-    # may carry an inline prompt or reference a shared one, so assert shape, not verbatim text)
+    # app fields — the mission slots are populated (prompt-agnostic: healthhub.yaml may carry an
+    # inline prompt or reference a shared one, so assert shape, not verbatim text)
     assert t.package == "sg.gov.hpb.healthhub"
-    assert t.frida_mode == "spawn"
     assert t.launch_activity is None
     assert t.objective and "launch" in t.objective.lower()
     assert t.details is not None and t.details.strip()
@@ -96,21 +97,6 @@ def test_load_target_absolute_spec_path(monkeypatch):
     t = load_target(_ROOT / RASP_SPEC)
     assert t.spec_path == RASP_SPEC
     assert t.apk_name == "rasp_dummy.apk"
-
-
-def test_frida_mode_defaults_to_attach(tmp_path):
-    # An app block without frida_mode falls back to the conservative attach default.
-    spec = tmp_path / "nomode.yaml"
-    spec.write_text(
-        "target_apk: apks/rasp_dummy/rasp_dummy.apk\n"
-        "app:\n"
-        "  package: com.example.x\n",
-        encoding="utf-8",
-    )
-    t = load_target(spec)
-    assert t.frida_mode == DEFAULT_FRIDA_MODE == "attach"
-    assert t.package == "com.example.x"
-    assert t.launch_activity is None and t.details is None
 
 
 def _bash_install_set(primary_rel: str) -> list[str]:
@@ -196,3 +182,94 @@ def test_parking_sg_inherits_phase3_and_appends_colour():
     # success bar comes wholly from the shared prompt (no per-app success append anymore)
     assert "success_signal_append" not in (_ROOT / "devices" / "parking_sg.yaml").read_text()
     assert "reproducible" in t.success_signal and "dumpsys" in t.success_signal
+
+
+# ---- yaml-config ticket 02: the eval-config split -----------------------------------------
+
+RASP_EVAL = "configs/evals/rasp_dummy.yaml"
+
+
+def test_legacy_device_yaml_broker_fields():
+    # A legacy combined yaml: the broker acquires the SAME file (device_spec == the positional)
+    # and sources the APK from it (broker_apk None) — no --target-apk, unchanged behaviour.
+    t = load_target(RASP_SPEC)
+    assert t.spec_path == RASP_SPEC
+    assert t.device_spec == RASP_SPEC
+    assert t.broker_apk is None
+
+
+def test_eval_config_resolves_app_and_device_references():
+    # The new shape: the eval config references an app + a device by bare name. The broker
+    # acquires the provisioning-only device and is handed the app's APK explicitly.
+    t = load_target(RASP_EVAL)
+    assert t.spec_path == RASP_EVAL
+    assert t.device_spec == "configs/devices/rasp_dummy.yaml"
+    assert t.broker_apk == "apks/rasp_dummy/rasp_dummy.apk"
+    # the APK file-set comes from the app file's target_apk
+    assert t.apk_name == "rasp_dummy.apk"
+    assert list(t.files) == ["/root/rasp_dummy.apk"]
+    (staged,) = t.files.values()
+    assert staged.endswith("apks/rasp_dummy/rasp_dummy.apk")
+
+
+def test_eval_config_reproduces_the_legacy_app_slots():
+    # No app-specific regression from the split: every mission slot the eval config resolves
+    # equals the legacy combined yaml's (they were derived from it).
+    ev = load_target(RASP_EVAL)
+    legacy = load_target(RASP_SPEC)
+    for field in ("package", "label", "launch_activity", "objective", "success_signal", "details"):
+        assert getattr(ev, field) == getattr(legacy, field), f"{field} diverged from legacy"
+
+
+def test_eval_config_is_cwd_independent(monkeypatch):
+    from_root = load_target(RASP_EVAL)
+    monkeypatch.chdir(_ROOT / "swarm-eval")
+    assert load_target(RASP_EVAL) == from_root
+
+
+def test_eval_config_accepts_path_style_references(tmp_path):
+    # A reference may be a path/`*.yaml` value, not only a bare name.
+    ev = tmp_path / "eval.yaml"
+    ev.write_text(
+        "app: configs/apps/rasp_dummy.yaml\n"
+        "device: configs/devices/rasp_dummy.yaml\n"
+        "workers: dynamic\n",
+        encoding="utf-8",
+    )
+    t = load_target(ev)
+    assert t.device_spec == "configs/devices/rasp_dummy.yaml"
+    assert t.broker_apk == "apks/rasp_dummy/rasp_dummy.apk"
+
+
+def test_eval_config_missing_device_file_raises(tmp_path):
+    ev = tmp_path / "eval.yaml"
+    ev.write_text("app: rasp_dummy\ndevice: nope\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="device"):
+        load_target(ev)
+
+
+def test_eval_config_missing_app_file_raises(tmp_path):
+    ev = tmp_path / "eval.yaml"
+    ev.write_text("app: nope\ndevice: rasp_dummy\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="app"):
+        load_target(ev)
+
+
+def test_eval_config_bad_workers_ref_raises(tmp_path):
+    # A typo'd `workers:` fails as loudly as a bad app/device ref (the role file must exist even
+    # though ticket 02 does not yet consume its contents).
+    ev = tmp_path / "eval.yaml"
+    ev.write_text("app: rasp_dummy\ndevice: rasp_dummy\nworkers: nope\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="workers"):
+        load_target(ev)
+
+
+def test_eval_config_app_owns_target_apk_no_frida_mode():
+    # The app file owns target_apk and carries NO frida_mode key (retired in ticket 02).
+    app = yaml.safe_load((_ROOT / "configs/apps/rasp_dummy.yaml").read_text())
+    assert app["target_apk"] == "apks/rasp_dummy/rasp_dummy.apk"
+    assert "frida_mode" not in app
+    # and the device file is provisioning-only (no app block, no APK)
+    dev = yaml.safe_load((_ROOT / "configs/devices/rasp_dummy.yaml").read_text())
+    assert "app" not in dev and "target_apk" not in dev
+    assert dev["name"] == "rasp_dummy" and dev["system_image"]
