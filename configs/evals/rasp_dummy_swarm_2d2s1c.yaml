@@ -1,0 +1,24 @@
+# Eval config: rasp_dummy attacked by a 5-worker mixed-role swarm — 2 dynamic (device) + 2 static
+# (device-less analysts) + 1 coordinator. Uses the Bedrock model this env can authenticate via the
+# LiteLLM proxy (LITELLM_API_KEY/LITELLM_BASE_URL in swarm-eval/.env). Only the 2 dynamic workers
+# lease a broker device.
+#   python swarm.py configs/evals/rasp_dummy_swarm_2d2s1c.yaml
+
+app: rasp_dummy         # -> configs/apps/rasp_dummy.yaml
+device: pixel          # -> configs/devices/pixel.yaml
+
+workers:
+  - role: dynamic       # leases a device; drives the runtime bypass
+    count: 2
+  - role: static        # device-less; decompiles, posts findings to the board
+    count: 2
+  - role: coordinator   # device-less; directs the others via board + DMs
+    count: 1
+
+# Bedrock Claude Opus 4.8 via the LiteLLM proxy (openai-api/<name>/<model> → <NAME>_API_KEY/_BASE_URL).
+model: openai-api/litellm/bedrock-claude-opus-4.8
+
+limits:
+  time_limit: 1800      # per-run Inspect --time-limit (s)
+  budget: 2700          # swarm launcher hard wall-clock (s)
+  cap: 6                # roster total is 5 ≤ 6
