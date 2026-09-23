@@ -85,6 +85,13 @@ class TargetConfig:
     # from the device spec, else its built-in default — precedence eval > device > default).
     writable_system: bool | None = None
     headless: bool | None = None
+    # env-hardening ticket 02 — a per-run mission ADDENDUM set ONLY on the eval config's top level
+    # (`prompt_append:`), NOT on the app/prompt spec. Appended verbatim after the generic mission
+    # so a throwaway "solution" eval (a validation oracle that HANDS the agent the answer, e.g.
+    # `configs/evals/dbs_solution.yaml`) can seed the bypass steps + "stop at bypass, skip exploit"
+    # WITHOUT editing the cold shared prompt or the app spec. `None` (the default for every real
+    # eval config) appends nothing, so the canonical missions render byte-identically as before.
+    prompt_append: str | None = None
 
     def env_up_args(self) -> tuple[str, ...]:
         """The env-up args the launcher forwards through `broker acquire` for this target: the APK
@@ -253,6 +260,7 @@ def _target_from_app(
     device_notes: str | None = None,
     writable_system: bool | None = None,
     headless: bool | None = None,
+    prompt_append: str | None = None,
 ) -> TargetConfig:
     """Assemble a `TargetConfig` from a resolved app dict + APK path. The 3-source mission notes
     (worker role, device) and the device-override whitelist ride through as keyword args."""
@@ -268,6 +276,7 @@ def _target_from_app(
         device_notes=device_notes,
         writable_system=writable_system,
         headless=headless,
+        prompt_append=prompt_append,
         **_mission_fields(root, app),
     )
 
@@ -335,6 +344,8 @@ def _load_eval_config(
         device_notes=_read_notes(device_path),
         writable_system=data.get("writable_system"),
         headless=data.get("headless"),
+        # env-hardening ticket 02 — an OPTIONAL top-level mission addendum (throwaway solution eval).
+        prompt_append=data.get("prompt_append"),
     )
 
 

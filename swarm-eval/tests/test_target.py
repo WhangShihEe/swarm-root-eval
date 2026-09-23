@@ -439,3 +439,15 @@ def test_load_run_config_omitted_knobs_are_unset(tmp_path):
     rc = load_run_config(ev)
     assert rc == RunConfig()
     assert rc.worker_count is None and rc.model is None
+
+
+def test_load_target_reads_top_level_prompt_append_solution_eval():
+    # env-hardening ticket 02 — an eval config's TOP-LEVEL `prompt_append:` is read into the
+    # TargetConfig (the throwaway "solution" oracle), while the cold discovery config leaves it None.
+    solution = load_target("configs/evals/dbs_solution.yaml")
+    assert solution.prompt_append is not None
+    assert "YOU ARE HANDED THE SOLUTION" in solution.prompt_append
+    cold = load_target("configs/evals/dbs.yaml")
+    assert cold.prompt_append is None, "the cold discovery eval must NOT carry the answer"
+    # the app spec is the SAME for both — the answer rides only on the eval config, not the spec
+    assert solution.package == cold.package == "com.dbs.sg.dbsmbanking"

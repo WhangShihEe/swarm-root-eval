@@ -155,12 +155,19 @@ def build_mission(target: TargetConfig, *, contract_path: str) -> str:
     only difference is their yaml: the `_device_and_tools` / `_verdict_block` boilerplate is
     byte-identical across targets and the app slots come from `target`. (Attach-vs-spawn is the
     agent's runtime choice; it never injects any guidance into the prompt.)"""
-    return "\n\n".join([
+    parts = [
         _briefing(target),
         _device_and_tools(contract_path),
         _confirm_line(target),
         _verdict_block(),
-    ])
+    ]
+    # env-hardening ticket 02 — a per-run mission ADDENDUM from the eval config's top-level
+    # `prompt_append:` (never the cold app/prompt spec). Appended LAST so a throwaway "solution"
+    # eval can hand the agent the answer / narrow the goal; `None` on every real config appends
+    # nothing, so the canonical missions are unchanged.
+    if target.prompt_append:
+        parts.append(target.prompt_append.strip())
+    return "\n\n".join(parts)
 
 
 def _device_less_tools() -> str:

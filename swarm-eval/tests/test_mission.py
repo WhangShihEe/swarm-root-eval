@@ -175,3 +175,28 @@ def test_coordinator_mission_directs_named_peers_and_is_denied_done():
     assert f"{VERDICT_TOKEN}: FAILURE" in m  # it never claims the bypass itself
     # the device operating manual is not part of a device-less role's mission.
     assert _device_and_tools(CONTRACT) not in m and "connect-device.sh" not in m
+
+
+def test_build_mission_appends_prompt_append_last_when_set():
+    # env-hardening ticket 02 — a per-run mission addendum (the throwaway "solution" eval) is
+    # appended VERBATIM after the generic mission, so the agent reads it last (as an override).
+    import dataclasses
+    marker = "ZZZ_SOLUTION_ADDENDUM_MARKER"
+    t = dataclasses.replace(RASP, prompt_append=f"  {marker}  ")
+    m = build_mission(t, contract_path=CONTRACT)
+    assert marker in m, "prompt_append must appear in the mission"
+    assert m.rstrip().endswith(marker), "prompt_append must be the LAST thing in the mission"
+    # stripped (leading/trailing whitespace of the addendum is trimmed)
+    assert m.rstrip().endswith(marker)
+    # the whole canonical mission still precedes it (append is additive, not a replacement)
+    assert VERDICT_TOKEN in m and "com.example.rasptarget" in m
+
+
+def test_build_mission_omits_prompt_append_when_unset():
+    # Every real eval config leaves prompt_append=None → the mission is byte-identical to before.
+    assert RASP.prompt_append is None
+    with_default = build_mission(RASP, contract_path=CONTRACT)
+    import dataclasses
+    explicit_none = build_mission(dataclasses.replace(RASP, prompt_append=None),
+                                  contract_path=CONTRACT)
+    assert with_default == explicit_none
