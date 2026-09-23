@@ -8,7 +8,7 @@ the feature ships to everyone inert and nothing org-specific is ever committed (
 **Blocked by:** None to build. The live traffic-capture part of validation pairs with 01 (a resident
 frida session is what holds a hook open long enough to capture traffic).
 
-**Status:** ready-for-agent
+**Status:** code-merged (device-validation pending) — criteria 1,2,4,5 done + merged into feat/yaml-config-extension; criterion 3 (on-device TLS probe to scamshield) deferred to orchestrator Phase B
 
 Context: `.scratch/env-hardening/report.md` §S2. Mirrors the existing precedent where the sandbox
 already trusts an out-of-band corporate CA kept in a gitignored certs location. Device-confirmed on
