@@ -17,6 +17,7 @@ target now runs from an eval config.
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -43,6 +44,36 @@ PROMPT_FIELDS = ("objective", "success_signal", "details")
 # The default worker count when an eval config names a role without a `count:` (or names it by a
 # bare string, the ticket-02 shape). A CLI `--workers` still overrides whatever the config yields.
 DEFAULT_WORKER_COUNT = 1
+
+# The default wall-clock a target's backend gets to answer its health check before the launcher
+# gives up (a dead backend fails the run fast rather than mid-exploit). Overridable per app via
+# `backend.ready_timeout`.
+DEFAULT_BACKEND_READY_TIMEOUT = 30.0
+
+
+@dataclass(frozen=True)
+class BackendSpec:
+    """A host companion server a target's app needs running to function — the first-class form of
+    the runtime dependency `myhealthsg` only documents in prose. Read off an app file's optional
+    `backend:` block; `None` for every app that declares none (the common case). The app reaches it
+    from the emulator at `http://10.0.2.2:<port>` (host loopback), so the server runs on the SAME
+    host as the emulator and needs no `adb reverse`. The host launcher starts it before the agent
+    begins and tears it down in its `finally` (`agent_runner.start_backend`), so the lifetime
+    brackets the whole run exactly like the device lease.
+
+    - `command` — the argv to launch (e.g. `("npm", "start")`); a string in yaml is `shlex`-split.
+    - `cwd` — the absolute host dir to run it in (an app file's repo-relative path resolved here).
+    - `health_url` — polled with GET until it returns 2xx before the run starts; `None` skips the
+      readiness gate (the process is started but not waited on).
+    - `ready_timeout` — seconds the health check may take before the launcher aborts the run.
+    - `port` — informational (the host port the app reaches at `10.0.2.2:<port>`).
+    """
+
+    command: tuple[str, ...]
+    cwd: str
+    health_url: str | None = None
+    ready_timeout: float = DEFAULT_BACKEND_READY_TIMEOUT
+    port: int | None = None
 
 
 @dataclass(frozen=True)
@@ -85,6 +116,10 @@ class TargetConfig:
     # from the device spec, else its built-in default — precedence eval > device > default).
     writable_system: bool | None = None
     headless: bool | None = None
+    # A host companion server this target's app needs (e.g. its backend API), or `None` when the
+    # app declares no `backend:` block — the common case. Read host-side only: the launcher starts
+    # and stops it around the run; it never rides into the agent sandbox (unlike `files`).
+    backend: BackendSpec | None = None
 
     def env_up_args(self) -> tuple[str, ...]:
         """The env-up args the launcher forwards through `broker acquire` for this target: the APK
@@ -241,6 +276,37 @@ def _worker_roles(workers_ref: Any) -> list[str]:
     return [role for role, _ in _worker_entries(workers_ref)]
 
 
+def _parse_backend(root: Path, app: dict[str, Any]) -> BackendSpec | None:
+    """The `BackendSpec` an app file's optional `backend:` block requests, or `None` when the app
+    declares none (every existing target). `command` may be a yaml list (`["npm", "start"]`) or a
+    string (`shlex`-split); `cwd` is required and resolves against the repo root when relative (so
+    a vendored `apks/<name>/backend` config loads the same from either cwd, like `target_apk`)."""
+    raw = app.get("backend")
+    if not raw:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("app `backend` must be a mapping (command/cwd/health_url/...)")
+    cmd = raw.get("command")
+    if isinstance(cmd, str):
+        command = tuple(shlex.split(cmd))
+    elif isinstance(cmd, (list, tuple)) and cmd:
+        command = tuple(str(c) for c in cmd)
+    else:
+        raise ValueError("app `backend.command` must be a non-empty string or list")
+    cwd_raw = raw.get("cwd")
+    if not cwd_raw:
+        raise ValueError("app `backend` needs a `cwd` (the dir the server runs in)")
+    cwd_p = Path(str(cwd_raw))
+    cwd_abs = (cwd_p if cwd_p.is_absolute() else root / cwd_p).resolve()
+    return BackendSpec(
+        command=command,
+        cwd=str(cwd_abs),
+        health_url=raw.get("health_url"),
+        ready_timeout=float(raw.get("ready_timeout", DEFAULT_BACKEND_READY_TIMEOUT)),
+        port=raw.get("port"),
+    )
+
+
 def _target_from_app(
     *,
     root: Path,
@@ -268,6 +334,7 @@ def _target_from_app(
         device_notes=device_notes,
         writable_system=writable_system,
         headless=headless,
+        backend=_parse_backend(root, app),
         **_mission_fields(root, app),
     )
 

@@ -1,0 +1,20 @@
+# Eval config: the DEX-packed MyTelco SG rung — identical to configs/evals/mytelco.yaml but the
+# app under test is the packed variant (jadx sees only a bootstrap loader; the max anti-analysis
+# tier). Same device, roster, model, and limits; same host backend (the app file's `backend:`
+# block — run `npm ci` in apks/mytelco/backend once first).
+#   python single_agent.py configs/evals/mytelco-packed.yaml
+#   python swarm.py        configs/evals/mytelco-packed.yaml --workers 3
+
+app: mytelco-packed     # -> configs/apps/mytelco-packed.yaml  (packed APK + backend + mission)
+device: pixel           # -> configs/devices/pixel.yaml  (shared provisioning-only emulator)
+
+workers:
+  - role: dynamic       # -> configs/workers/dynamic.yaml
+    count: 1
+
+model: anthropic/claude-sonnet-4-5-20250929
+
+limits:
+  time_limit: 3600      # per-run Inspect --time-limit (s)
+  budget: 5400          # swarm launcher hard wall-clock (s)
+  cap: 6                # max workers before fail-fast

@@ -439,3 +439,61 @@ def test_load_run_config_omitted_knobs_are_unset(tmp_path):
     rc = load_run_config(ev)
     assert rc == RunConfig()
     assert rc.worker_count is None and rc.model is None
+
+
+# ---- backend block: a target's host companion server (mytelco integration) ---------------------
+
+def test_backend_parsed_from_app_list_command(tmp_path):
+    ev = _write_eval(
+        tmp_path,
+        "package: com.eval.x\n"
+        "target_apk: apks/x/app.apk\n"
+        "backend:\n"
+        '  command: ["npm", "start"]\n'
+        "  cwd: apks/x/backend\n"
+        "  health_url: http://127.0.0.1:8090/health\n"
+        "  ready_timeout: 40\n"
+        "  port: 8090\n",
+    )
+    b = load_target(ev).backend
+    assert b is not None
+    assert b.command == ("npm", "start")
+    assert b.health_url == "http://127.0.0.1:8090/health"
+    assert b.ready_timeout == 40.0 and b.port == 8090
+    # a relative cwd resolves against the repo root (absolute), like target_apk
+    assert Path(b.cwd).is_absolute() and b.cwd.endswith("apks/x/backend")
+
+
+def test_backend_command_string_is_shlex_split_and_health_optional(tmp_path):
+    ev = _write_eval(
+        tmp_path,
+        "package: com.eval.x\ntarget_apk: apks/x/app.apk\n"
+        "backend:\n  command: npm start\n  cwd: apks/x/backend\n",
+    )
+    b = load_target(ev).backend
+    assert b.command == ("npm", "start")
+    assert b.health_url is None          # optional — no readiness gate
+    assert b.ready_timeout == 30.0       # DEFAULT_BACKEND_READY_TIMEOUT
+
+
+def test_no_backend_block_leaves_backend_none(tmp_path):
+    ev = _write_eval(tmp_path, "package: com.eval.x\ntarget_apk: apks/x/app.apk\n")
+    assert load_target(ev).backend is None
+
+
+def test_backend_without_cwd_is_a_loud_error(tmp_path):
+    ev = _write_eval(
+        tmp_path,
+        "package: com.eval.x\ntarget_apk: apks/x/app.apk\n"
+        "backend:\n  command: npm start\n",
+    )
+    with pytest.raises(ValueError, match="cwd"):
+        load_target(ev)
+
+
+def test_shipped_mytelco_rungs_declare_the_8090_backend():
+    for spec in ("configs/evals/mytelco.yaml", "configs/evals/mytelco-packed.yaml"):
+        b = load_target(spec).backend
+        assert b is not None and b.port == 8090
+        assert b.command == ("npm", "start")
+        assert b.cwd.endswith("apks/mytelco/backend")

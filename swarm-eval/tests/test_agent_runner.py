@@ -2,6 +2,7 @@
 builders, the contract-file write, and the run-id/dir helpers. Pure functions — no broker, no
 subprocess, no wall-clock."""
 
+import pytest
 from pathlib import Path
 
 from swarm_eval import agent_runner as ar
@@ -204,3 +205,105 @@ def test_mint_run_id_is_prefixed_and_unique():
 def test_swarm_eval_dir_points_at_the_project_root_holding_the_task():
     d = ar.swarm_eval_dir()
     assert (d / DEFAULT_WORKER_TASK).exists()
+
+
+# ---- start_backend: a target's host companion server, started/health-gated around a run --------
+# (mytelco integration) hermetic: subprocess.Popen and the health probe are faked; clock injected.
+
+from swarm_eval.target import BackendSpec  # noqa: E402
+
+
+class _FakePopen:
+    """A stand-in for the backend process: `poll` returns `code` (None = still running)."""
+
+    def __init__(self, argv, cwd=None, code=None, **kw):
+        self.argv = list(argv)
+        self.cwd = cwd
+        self.pid = 2147483646  # a pid that does not exist, so os.getpgid raises harmlessly
+        self._code = code
+        self.returncode = code
+
+    def poll(self):
+        return self._code
+
+    def wait(self, timeout=None):
+        return self._code if self._code is not None else 0
+
+
+def _spec(**kw) -> BackendSpec:
+    base = dict(command=("npm", "start"), cwd="/tmp/backend",
+                health_url="http://127.0.0.1:8090/health", ready_timeout=1.0, port=8090)
+    base.update(kw)
+    return BackendSpec(**base)
+
+
+def test_start_backend_is_a_noop_without_a_spec(tmp_path):
+    # every target with no `backend:` block passes None; both launchers call unconditionally.
+    assert ar.start_backend(None, log_dir=tmp_path) is None
+
+
+def test_start_backend_launches_in_cwd_and_waits_for_health(tmp_path, monkeypatch):
+    launched = {}
+
+    def fake_popen(argv, cwd=None, **kw):
+        launched["argv"], launched["cwd"] = list(argv), cwd
+        return _FakePopen(argv, cwd, code=None)
+
+    monkeypatch.setattr(ar.subprocess, "Popen", fake_popen)
+    # health flips to OK on the 3rd probe — proves the launcher actually polls, not fire-and-forget.
+    calls = {"n": 0}
+    def health(url):
+        calls["n"] += 1
+        return calls["n"] >= 3
+    monkeypatch.setattr(ar, "_health_ok", health)
+
+    handle = ar.start_backend(_spec(), log_dir=tmp_path, clock=lambda: 0.0, sleep=lambda s: None)
+
+    assert isinstance(handle, ar.BackendProcess)
+    assert launched["argv"] == ["npm", "start"] and launched["cwd"] == "/tmp/backend"
+    assert calls["n"] == 3  # polled until 2xx
+    assert (tmp_path / "backend.log").exists()  # output captured for debugging
+
+
+def test_start_backend_raises_and_stops_when_health_never_comes_up(tmp_path, monkeypatch):
+    monkeypatch.setattr(ar.subprocess, "Popen", lambda *a, **k: _FakePopen(a[0], k.get("cwd"), code=None))
+    monkeypatch.setattr(ar, "_health_ok", lambda url: False)  # never ready
+    signalled = []
+    monkeypatch.setattr(ar.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(ar.os, "killpg", lambda pgid, sig: signalled.append(sig))
+
+    # a clock that advances past the ready_timeout, so the readiness loop gives up
+    t = {"v": 0.0}
+    def clock():
+        t["v"] += 5.0
+        return t["v"]
+
+    with pytest.raises(RuntimeError, match="not ready"):
+        ar.start_backend(_spec(ready_timeout=1.0), log_dir=tmp_path, clock=clock, sleep=lambda s: None)
+    assert signalled, "a timed-out backend must be torn down (SIGTERM its group)"
+
+
+def test_start_backend_raises_when_the_process_exits_early(tmp_path, monkeypatch):
+    # the server crashed on boot (bad deps, port taken) → fail fast rather than poll to the timeout.
+    monkeypatch.setattr(ar.subprocess, "Popen", lambda *a, **k: _FakePopen(a[0], k.get("cwd"), code=1))
+    monkeypatch.setattr(ar, "_health_ok", lambda url: False)
+    with pytest.raises(RuntimeError, match="exited early"):
+        ar.start_backend(_spec(), log_dir=tmp_path, clock=lambda: 0.0, sleep=lambda s: None)
+
+
+def test_start_backend_adopts_an_already_running_backend(tmp_path, monkeypatch):
+    # shared-machine reality: if the backend already answers health, adopt it — do NOT spawn a
+    # duplicate (port collision), and the handle must NOT own it (stop is a no-op).
+    spawned = []
+    monkeypatch.setattr(ar.subprocess, "Popen", lambda *a, **k: spawned.append(a) or _FakePopen(a[0]))
+    monkeypatch.setattr(ar, "_health_ok", lambda url: True)  # already up
+    killed = []
+    monkeypatch.setattr(ar.os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(ar.os, "killpg", lambda pgid, sig: killed.append(sig))
+
+    handle = ar.start_backend(_spec(), log_dir=tmp_path, clock=lambda: 0.0, sleep=lambda s: None)
+
+    assert isinstance(handle, ar.BackendProcess)
+    assert spawned == [], "must not spawn when the backend is already running"
+    handle.stop()
+    assert killed == [], "must not kill a backend it did not start (adopted)"

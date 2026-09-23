@@ -333,9 +333,9 @@ def launch_inspect_view(log_dir: Path, port: int) -> subprocess.Popen:
 
 
 class Conductor:
-    """Runs one swarm. Inject `runner`/`acquire`/`release`/`clock`/`sleep`/`view_launcher` to
-    exercise the whole orchestration hermetically (no real subprocess, broker, wall-clock, or
-    webview server)."""
+    """Runs one swarm. Inject `runner`/`acquire`/`release`/`clock`/`sleep`/`view_launcher`/
+    `backend_launcher` to exercise the whole orchestration hermetically (no real subprocess,
+    broker, wall-clock, webview server, or backend process)."""
 
     def __init__(
         self,
@@ -347,6 +347,9 @@ class Conductor:
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
         view_launcher: ViewLauncher = launch_inspect_view,
+        backend_launcher: Callable[..., agent_runner.BackendProcess | None] = (
+            agent_runner.start_backend
+        ),
     ) -> None:
         self.config = config
         self._runner = runner
@@ -355,6 +358,7 @@ class Conductor:
         self._clock = clock
         self._sleep = sleep
         self._view_launcher = view_launcher
+        self._backend_launcher = backend_launcher
 
     def run(self) -> SwarmResult:
         cfg = self.config
@@ -399,10 +403,15 @@ class Conductor:
         acquired: list[str] = []  # serials to release at teardown (populated as we acquire)
         handles: list[RunHandle] = []
         view_handle: ViewHandle | None = None  # the auto-started webview, stopped in the finally
+        backend_handle: agent_runner.BackendProcess | None = None  # target's server, stopped below
         done_posted = False  # did the arbiter announce `done`? gates the cooperative-stop window
         logger.info("swarm %s: %d worker(s) [%s], board=%s", swarm_id, n,
                     ", ".join(f"{a}:{r}" for a, r in role_map.items()), board.path)
         try:
+            # The target's host companion server (if any) brackets the whole swarm: up before any
+            # worker launches (blocking on its health check, so a dead backend fails fast), down in
+            # the `finally`. A no-op for every target with no `backend:` block.
+            backend_handle = self._start_backend(log_dir)
             # forum up → devices acquired (dynamic workers only, before any launch) → runs launched.
             specs = self._acquire_and_plan(
                 swarm_id, log_dir, forum.root, worker_ids, role_map, acquired
@@ -434,6 +443,7 @@ class Conductor:
             # no saving — it is written live under the swarm log dir, so it is already the artifact.
             self._shutdown(handles, cooperative=done_posted)
             self._stop_view(view_handle)
+            self._stop_backend(backend_handle)
             self._release_all(acquired)
 
     def _acquire_and_plan(
@@ -527,6 +537,27 @@ class Conductor:
                 view_handle.terminate()
         except Exception as e:  # noqa: BLE001 — stopping the webview is best-effort
             logger.warning("swarm: could not stop the inspect view server: %s", e)
+
+    def _start_backend(self, log_dir: Path) -> agent_runner.BackendProcess | None:
+        """Start the target's host companion server (`agent_runner.start_backend`) if the app
+        declares a `backend:` block, blocking on its health check; `None` otherwise. Loaded from
+        the same eval config the rest of the run uses — a second cheap `load_target` read, kept
+        local so the backend concern doesn't thread through `_acquire_and_plan`. A readiness
+        failure raises out of `run()`'s `try`, so the `finally` still tears the swarm down."""
+        backend = load_target(self.config.spec).backend
+        if backend is not None:
+            logger.info("swarm: starting backend server (%s)", backend.health_url or backend.cwd)
+        return self._backend_launcher(backend, log_dir=log_dir)
+
+    def _stop_backend(self, backend_handle: agent_runner.BackendProcess | None) -> None:
+        """Stop the target's backend server. Best-effort, like `_stop_view`: a failure is logged,
+        never raised — it must not mask the run error or block device release."""
+        if backend_handle is None:
+            return
+        try:
+            backend_handle.stop()
+        except Exception as e:  # noqa: BLE001 — stopping the backend is best-effort
+            logger.warning("swarm: could not stop the backend server: %s", e)
 
     def _post_done(self, board: Board, verdict: Verdict) -> None:
         """Post the reserved `done` verdict as the arbiter. Posting through `Board` directly (not
