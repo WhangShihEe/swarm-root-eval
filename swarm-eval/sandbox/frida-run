@@ -1,5 +1,5 @@
 #!/opt/frida/bin/python3
-"""Non-interactive frida runner (ticket 07).
+"""Non-interactive frida runner (ticket 07; resident mode + auto-foreground, env-hardening 01).
 
 `frida -l agent.js` drops into an interactive REPL and never exits, so the bridged agent
 SIGTERMs it and inherits rc 143 — a hung tool, not a result. This runner instead attaches (or
@@ -10,20 +10,40 @@ fast path.
 Reaches the device the same way the connect helper does — over the adb-forwarded tunnel, which
 frida sees as a USB device (`-U`). Run `/root/connect-device.sh` first.
 
+Two lifecycle failure modes this fixes (env-hardening report §S1, device-validated):
+
+  RESIDENT mode (`-k/--keep-alive`). The default runner tears the session down the instant the
+  agent sends `done` — so a hook is gone before the app exercises it (traffic capture, driving
+  the UI over adb/uiautomator). In resident mode a `done` is printed but does NOT end the
+  session: the hook stays live until you kill the runner (SIGTERM/SIGINT) or its `--timeout`
+  window (with `-k`, `-t 0` = hold until signalled). Run it in the background (`frida-run … -k
+  -t 0 &`), drive the still-hooked app, then `kill %1` when finished.
+
+  AUTO-FOREGROUND after spawn. A `-f`-spawned app is resumed but left with no foreground
+  activity, so Android's cached-apps freezer (`do_freezer_trap`) freezes it and the guarded code
+  the hook targets never runs. After resume this brings the app to the foreground — via the
+  activity manager (`am start`, preferred; `monkey` was flaky on this image) — so the check
+  actually fires. Opt out with `--no-foreground`.
+
 Completion protocol (agent -> runner):
-    send({ type: 'done', ok: true })    # end the session, exit 0
+    send({ type: 'done', ok: true })    # end the session, exit 0 (ignored in -k mode)
     send({ type: 'done', ok: false })   # end the session, exit 2 (agent reports it failed)
 Any other `send(...)` payload is printed. An uncaught agent exception (frida 'error' message)
-exits 3. No completion signal before the timeout exits 124 (matching coreutils `timeout`).
+exits 3. No completion signal before the timeout exits 124 (matching coreutils `timeout`); in
+resident mode the window elapsing (or a kill signal) is a clean exit 0.
 
 Examples:
-    frida-run -f com.example.app -l agent.compiled.js -t 30      # spawn, resume, run 30s
+    frida-run -f com.example.app -l agent.compiled.js -t 30      # spawn, resume, foreground, 30s
     frida-run -a com.example.app -l agent.compiled.js            # attach to a running app
+    frida-run -f com.example.app -l agent.compiled.js -k -t 0 &  # spawn + hold the hook resident,
+    ...drive the app over adb/uiautomator against the live hook...; kill %1   # then stop it
 """
 
 from __future__ import annotations
 
 import argparse
+import signal
+import subprocess
 import sys
 import time
 
@@ -33,7 +53,8 @@ import frida
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="frida-run",
-        description="Attach/spawn, load a compiled frida agent, and exit (no REPL).",
+        description="Attach/spawn, load a compiled frida agent, and exit (no REPL). "
+                    "Optionally hold the hook resident (-k) and auto-foreground a spawn.",
     )
     p.add_argument("-l", "--script", required=True, help="path to the (compiled) agent .js")
     target = p.add_mutually_exclusive_group(required=True)
@@ -42,10 +63,86 @@ def _build_parser() -> argparse.ArgumentParser:
     target.add_argument("-f", "--spawn", metavar="PACKAGE",
                         help="spawn a package/binary, load the agent, then resume it")
     p.add_argument("-t", "--timeout", type=float, default=60.0,
-                   help="seconds to wait for a completion signal before giving up (default 60)")
+                   help="seconds to wait for a completion signal before giving up (default 60). "
+                        "With -k, this is the max resident window; -t 0 holds until signalled.")
+    p.add_argument("-k", "--keep-alive", action="store_true",
+                   help="RESIDENT mode: hold the session (and hook) open until SIGTERM/SIGINT (or "
+                        "the -t window); a `done` message is printed but no longer tears it down. "
+                        "Use it to persist a hook while you drive adb/uiautomator or capture "
+                        "traffic against the live app. Run it backgrounded (`… -k -t 0 &`) and "
+                        "`kill` it when finished.")
+    p.add_argument("--no-foreground", action="store_true",
+                   help="do NOT auto-foreground the app after a spawn. By default a `-f` spawn is "
+                        "brought to the foreground (activity-manager `am start`, else `monkey`) so "
+                        "it leaves the cached-apps freezer and the hooked check actually runs.")
+    p.add_argument("--activity", metavar="PKG/ACTIVITY",
+                   help="explicit launcher component for the post-spawn foreground `am start -n` "
+                        "(e.g. com.example.app/.MainActivity); if omitted it is resolved from the "
+                        "package. Ignored without -f or with --no-foreground.")
     p.add_argument("--device-timeout", type=float, default=15.0,
                    help="seconds to wait for the USB/adb-tunnel device (default 15)")
     return p
+
+
+def _done_outcome(ok: bool, keep_alive: bool) -> int | None:
+    """Map a `done` signal to a runner exit code, or None when it must NOT end the session.
+
+    Non-resident (the default, UNCHANGED): a `done` ends the run — ok -> 0, not-ok -> 2.
+    Resident (`-k`): always None — a `done` is informational and the hook stays live until the
+    runner is signalled/times out. Pure so the lifecycle contract is unit-testable device-free."""
+    if keep_alive:
+        return None
+    return 0 if ok else 2
+
+
+def _foreground(package: str, activity: str | None) -> None:
+    """Bring a freshly-spawned+resumed app to the foreground so it leaves Android's cached-apps
+    freezer (`do_freezer_trap`) and runs the guarded code the hook targets. PREFERS the activity
+    manager (`am start -n <pkg>/<activity>`) — `monkey` was flaky on this image — and falls back
+    to `monkey … LAUNCHER` only when no component can be determined or `am start` errors. Reaches
+    the same broker-granted device the agent's own `adb` does (honours `$ANDROID_SERIAL`).
+    Best-effort: foregrounding must never crash the run, so every failure is swallowed."""
+    component = None
+    if activity:
+        component = activity if "/" in activity else f"{package}/{activity}"
+    else:
+        # Resolve the launcher activity from the package (last line is like `com.pkg/.Main`).
+        try:
+            out = subprocess.run(
+                ["adb", "shell", "cmd", "package", "resolve-activity", "--brief", package],
+                capture_output=True, text=True, timeout=15, check=False,
+            ).stdout.strip().splitlines()
+            if out and "/" in out[-1]:
+                component = out[-1].strip()
+        except Exception:  # noqa: BLE001 — resolution is best-effort; monkey is the fallback
+            component = None
+
+    if component:
+        try:
+            res = subprocess.run(
+                ["adb", "shell", "am", "start", "-n", component],
+                capture_output=True, text=True, timeout=15, check=False,
+            )
+            # `am start` can exit 0 while printing `Error:` on a bad component — check both.
+            combined = (res.stdout or "") + (res.stderr or "")
+            if res.returncode == 0 and "Error" not in combined:
+                print(f"[frida-run] foregrounded {component} via am start")
+                return
+            print(f"[frida-run] am start {component} did not take ({combined.strip()!r}); "
+                  "falling back to monkey", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001 — fall through to monkey
+            print(f"[frida-run] am start failed ({exc}); falling back to monkey", file=sys.stderr)
+
+    # Fallback: monkey LAUNCHER intent (kept only as a last resort — flaky on this image).
+    try:
+        subprocess.run(
+            ["adb", "shell", "monkey", "-p", package, "-c",
+             "android.intent.category.LAUNCHER", "1"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15, check=False,
+        )
+        print(f"[frida-run] foregrounded {package} via monkey")
+    except Exception as exc:  # noqa: BLE001 — best-effort; the run continues either way
+        print(f"[frida-run] foreground nudge failed: {exc}", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -61,7 +158,12 @@ def main(argv: list[str] | None = None) -> int:
             if isinstance(payload, dict) and payload.get("type") == "done":
                 ok = bool(payload.get("ok", True))
                 print(f"[frida-run] done ok={ok} payload={payload}")
-                outcome["code"] = 0 if ok else 2
+                code = _done_outcome(ok, args.keep_alive)
+                if code is None:
+                    # RESIDENT: a `done` is informational and must NOT end the session — the
+                    # hook stays live until a kill signal (or the -t window) stops the runner.
+                    return
+                outcome["code"] = code
                 return
             print(f"[frida-run] {payload}")
         elif message.get("type") == "error":
@@ -70,6 +172,14 @@ def main(argv: list[str] | None = None) -> int:
             if stack:
                 print(stack, file=sys.stderr)
             outcome["code"] = 3
+
+    # RESIDENT mode installs signal handlers so a `kill`/Ctrl-C ends the held session cleanly.
+    stop = {"flag": False}
+    if args.keep_alive:
+        def _on_signal(signum: int, frame: object) -> None:
+            stop["flag"] = True
+        signal.signal(signal.SIGTERM, _on_signal)
+        signal.signal(signal.SIGINT, _on_signal)
 
     pid = None
     if args.spawn is not None:
@@ -86,16 +196,41 @@ def main(argv: list[str] | None = None) -> int:
     script.load()
     if pid is not None:
         device.resume(pid)
+        if not args.no_foreground:
+            # Let the resumed process register before we bring it forward.
+            time.sleep(0.5)
+            _foreground(args.spawn, args.activity)
 
-    deadline = time.time() + args.timeout
-    while outcome["code"] is None and time.time() < deadline:
-        time.sleep(0.1)
+    if args.keep_alive:
+        # RESIDENT: hold the hook live until signalled, an agent error, or (if -t > 0) the window.
+        # `-t 0` (or any non-positive) = hold until signalled. This is a clean exit, not a
+        # timeout: the resident window is the intended lifetime, not a failure to complete.
+        print("[frida-run] resident: holding the session; send SIGTERM/SIGINT (or `kill`) to stop"
+              + (f" (max {args.timeout}s)" if args.timeout > 0 else ""))
+        deadline = None if args.timeout <= 0 else time.time() + args.timeout
+        while not stop["flag"] and outcome["code"] is None:
+            if deadline is not None and time.time() >= deadline:
+                break
+            time.sleep(0.1)
+    else:
+        deadline = time.time() + args.timeout
+        while outcome["code"] is None and time.time() < deadline:
+            time.sleep(0.1)
 
     for teardown in (script.unload, session.detach):
         try:
             teardown()
         except Exception:  # noqa: BLE001 — teardown is best-effort; the exit code is the result
             pass
+
+    if args.keep_alive:
+        # An agent error (code 3) is still surfaced; otherwise a held/elapsed resident session
+        # is a clean exit 0 (the hook did its job for the whole window).
+        if outcome["code"] is not None:
+            return int(outcome["code"])
+        print("[frida-run] resident session ended "
+              + ("on signal" if stop["flag"] else f"after {args.timeout}s window"))
+        return 0
 
     if outcome["code"] is None:
         print(f"[frida-run] timeout after {args.timeout}s with no completion signal",
