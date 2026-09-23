@@ -36,9 +36,12 @@ board tools.
 ### `swarm.py` — N agents + a shared board (the Conductor)
 
 ```bash
+# Run from swarm-eval/ with the venv ACTIVATED — the launcher spawns `inspect eval` by bare name,
+# so `.venv/bin` must be on PATH (else FileNotFoundError: 'inspect'). `source .venv/bin/activate`.
 python swarm.py configs/evals/rasp_dummy.yaml --workers 1          # N=1 = the single-agent case
 python swarm.py configs/evals/healthhub.yaml --workers 3 --time-limit 1200 --budget 2700 \
     --model anthropic/claude-sonnet-4-5-20250929
+python swarm.py configs/evals/rasp_dummy_swarm_2d2s1c.yaml         # mixed roles: 2 dynamic + 2 static + 1 coordinator
 ```
 
 The Conductor (`src/swarm_eval/conductor.py`) mints a swarm-id, creates the board, pre-acquires
