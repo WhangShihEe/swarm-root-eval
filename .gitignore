@@ -8,3 +8,8 @@
 # Broker runtime state — request queue + pidfile + profile marker + broker.log (ticket 06).
 # Machine-local, owned by the standing broker process; never committed. Override with BROKER_DIR.
 /.broker/
+
+# Private handover package (documentation ticket 03) — supervisor/next-team HOTO + the
+# AI bootstrap prompt. Internal only; never in public history. The public entry point is
+# the README, not this.
+/docs/handover/

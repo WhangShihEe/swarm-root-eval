@@ -7,10 +7,10 @@ more detail. Kept short and compact.
 
 **Blocked by:** 02 (the handover's TLDR points at the finished README).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `docs/handover/` added to `.gitignore` (private; not in public history).
-- [ ] `docs/handover/HANDOVER.md` (human-read):
+- [x] `docs/handover/` added to `.gitignore` (private; not in public history).
+- [x] `docs/handover/HANDOVER.md` (human-read):
       - TLDR that points to the README for the general shape.
       - A human-readable explanation of the **agent workflow** used here (AI Hero, matt-pocock
         skills, the grilling -> tickets loop) so a reader grasps *how the work gets done*.
@@ -22,6 +22,6 @@ more detail. Kept short and compact.
         / better harness (gated by time+budget, not capability — "the model is not the bottleneck");
         and real-login access (Singpass / NRIC / phone numbers for authorized white-hat pen-testing —
         cannot meaningfully test without real credentials, and the author's own ID cannot be used).
-- [ ] `docs/handover/CONTINUE.prompt.md` (AI-only bootstrap): a prompt that spins up an agent to
+- [x] `docs/handover/CONTINUE.prompt.md` (AI-only bootstrap): a prompt that spins up an agent to
       continue *or interview for more*, pointing at the grilling-skill workflow and the
       `.scratch/physical-harness/` tickets as the first concrete pickup.
