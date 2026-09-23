@@ -381,7 +381,7 @@ class Conductor:
         # device each acquire leases and, when the config splits the APK out, which APK to install
         # (`--target-apk`). The workers' `-T spec=` stays the positional itself (build_run_argv).
         target = load_target(self.config.spec)
-        apk_args = ("--target-apk", target.broker_apk) if target.broker_apk else ()
+        apk_args = target.env_up_args()
         specs: list[RunSpec] = []
         total = len(worker_ids)
         for i, agent_id in enumerate(worker_ids, start=1):

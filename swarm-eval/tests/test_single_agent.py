@@ -176,3 +176,53 @@ def test_run_single_legacy_yaml_acquires_the_positional_with_no_target_apk(tmp_p
         runner=lambda s: FakeHandle(0),
     )
     assert broker.acquired == [(YAML,)]
+
+
+# ---- yaml-config ticket 03: run knobs from the eval config + CLI override -------------------
+
+def test_build_config_takes_run_knobs_from_the_eval_config():
+    # With no CLI run-flags, the eval config's model + limits drive the run (replicable from file).
+    cfg = cli.build_config(cli.parse_args([EVAL_YAML]))
+    assert cfg.model == "anthropic/claude-sonnet-4-5-20250929"  # configs/evals/rasp_dummy.yaml
+    assert cfg.time_limit == 1800
+
+
+def test_cli_flags_override_the_eval_config_values():
+    # A CLI flag wins over the eval config value for that run; an unset flag leaves the config value.
+    cfg = cli.build_config(cli.parse_args([EVAL_YAML, "--model", "anthropic/x", "--time-limit", "600"]))
+    assert cfg.model == "anthropic/x"      # CLI overrides the config's model
+    assert cfg.time_limit == 600           # CLI overrides the config's time_limit
+
+
+def test_legacy_yaml_falls_back_to_built_in_defaults():
+    # A legacy device yaml carries no run knobs → the launcher's built-in defaults stand.
+    from swarm_eval.agent_runner import DEFAULT_MODEL, DEFAULT_TIME_LIMIT
+
+    cfg = cli.build_config(cli.parse_args([YAML]))
+    assert cfg.model == DEFAULT_MODEL
+    assert cfg.time_limit == DEFAULT_TIME_LIMIT
+
+
+def test_run_single_forwards_eval_config_device_overrides_to_the_broker(tmp_path):
+    # AC3 wiring: an eval config's writable_system/headless overrides ride through acquire as the
+    # env-up flags that win over the device spec (eval > device), after --target-apk. Custom app-
+    # less device/worker files keep the fixture self-contained; the app is the real rasp app file.
+    (tmp_path / "role.yaml").write_text("role: r\nnotes: n\n", encoding="utf-8")
+    (tmp_path / "dev.yaml").write_text("name: d\nsystem_image: img\n", encoding="utf-8")
+    ev = tmp_path / "eval.yaml"
+    ev.write_text(
+        "app: configs/apps/rasp_dummy.yaml\n"
+        f"device: {tmp_path / 'dev.yaml'}\n"
+        f"workers:\n  - role: {tmp_path / 'role.yaml'}\n    count: 1\n"
+        "writable_system: false\n"
+        "headless: false\n",
+        encoding="utf-8",
+    )
+    broker = FakeApkBroker()
+    cli.run_single(
+        _config(tmp_path, spec=str(ev)),
+        acquire=broker.acquire, release=broker.release,
+        runner=lambda s: FakeHandle(0),
+    )
+    (spec, *extra) = broker.acquired[0]
+    assert extra == ["--target-apk", "apks/rasp_dummy/rasp_dummy.apk", "--frida-only", "--window"]

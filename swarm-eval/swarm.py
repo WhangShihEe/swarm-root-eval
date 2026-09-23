@@ -27,25 +27,47 @@ from pathlib import Path
 from swarm_eval.conductor import (
     DEFAULT_CAP,
     DEFAULT_MODEL,
+    DEFAULT_TIME_LIMIT,
     DEFAULT_VIEW_PORT,
     SUCCESS,
     Conductor,
     SwarmConfig,
     SwarmError,
 )
+from swarm_eval.target import load_run_config
+
+# The launcher's built-in defaults for the run knobs an eval config may set — the last tier of the
+# ticket-03 precedence (CLI > eval config > this). The swarm hard wall-clock and the single-agent
+# baseline worker count.
+DEFAULT_BUDGET = 3600.0
+DEFAULT_WORKERS = 1
+
+
+def _pick(cli, cfg, default):
+    """CLI > config > built-in default: the CLI value when the flag was given (not None), else the
+    eval-config value when it set one (not None), else the built-in default (ticket 03)."""
+    if cli is not None:
+        return cli
+    if cfg is not None:
+        return cfg
+    return default
 
 
 def build_config(args: argparse.Namespace) -> SwarmConfig:
-    """Map parsed args → `SwarmConfig`. `--board-dir`/`--log-dir` are only forwarded when given,
-    so the config's under-`swarm-eval/` defaults stand otherwise."""
+    """Map parsed args + the eval config's run knobs → `SwarmConfig`, resolving CLI > config >
+    built-in default per knob (ticket 03): `--workers`/`--model`/limits/budget/cap left unset are
+    `None` here (see `parse_args`), so the eval config's value stands; a legacy device yaml yields
+    an empty `RunConfig`, so the built-in defaults apply (no regression). `--board-dir`/`--log-dir`
+    are only forwarded when given, so the config's under-`swarm-eval/` defaults stand otherwise."""
+    run = load_run_config(args.spec)
     kwargs: dict = dict(
-        workers=args.workers,
-        model=args.model,
+        workers=_pick(args.workers, run.worker_count, DEFAULT_WORKERS),
+        model=_pick(args.model, run.model, DEFAULT_MODEL),
         spec=args.spec,
-        cap=args.cap,
-        time_limit=args.time_limit,
-        message_limit=args.message_limit,
-        budget=args.budget,
+        cap=_pick(args.cap, run.cap, DEFAULT_CAP),
+        time_limit=_pick(args.time_limit, run.time_limit, DEFAULT_TIME_LIMIT),
+        message_limit=_pick(args.message_limit, run.message_limit, None),
+        budget=_pick(args.budget, run.budget, DEFAULT_BUDGET),
         grace=args.grace,
         poll_interval=args.poll_interval,
         view=args.view,
@@ -60,19 +82,28 @@ def build_config(args: argparse.Namespace) -> SwarmConfig:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="swarm", description="Launch one swarm run (ticket 05b).")
-    p.add_argument("spec", help="device yaml selecting the target, e.g. devices/healthhub.yaml")
-    p.add_argument("-n", "--workers", type=int, default=1,
-                   help="number of worker agents (N=1 is the single-agent case; default 1)")
-    p.add_argument("--model", default=DEFAULT_MODEL,
-                   help="served provider model the sandboxed CC proxies to (the sweep lever)")
-    p.add_argument("--cap", type=int, default=DEFAULT_CAP,
-                   help="max workers before fail-fast (mirrors the broker cap; default 6)")
+    p.add_argument("spec", help="eval config or device yaml selecting the target/run, e.g. "
+                                "configs/evals/rasp_dummy.yaml")
+    # Run-knob flags default to None (not the built-in default) so an unset flag is distinguishable
+    # from one passed with the default value — `build_config` then applies CLI > config > default.
+    p.add_argument("-n", "--workers", type=int, default=None,
+                   help="number of worker agents (N=1 is the single-agent case); overrides the "
+                        "eval config's worker roster (built-in default 1)")
+    p.add_argument("--model", default=None,
+                   help="served provider model the sandboxed CC proxies to (the sweep lever); "
+                        "overrides the eval config's `model`")
+    p.add_argument("--cap", type=int, default=None,
+                   help="max workers before fail-fast (mirrors the broker cap); overrides the eval "
+                        "config's limits.cap (built-in default 6)")
     p.add_argument("--time-limit", type=int, default=None,
-                   help="per-run Inspect --time-limit in seconds (layer-b termination)")
+                   help="per-run Inspect --time-limit in seconds (layer-b termination); overrides "
+                        "the eval config's limits.time_limit")
     p.add_argument("--message-limit", type=int, default=None,
-                   help="per-run Inspect --message-limit (layer-b termination)")
-    p.add_argument("--budget", type=float, default=3600.0,
-                   help="launcher hard wall-clock, seconds, before the swarm fails (default 3600)")
+                   help="per-run Inspect --message-limit (layer-b termination); overrides the eval "
+                        "config's limits.message_limit")
+    p.add_argument("--budget", type=float, default=None,
+                   help="launcher hard wall-clock, seconds, before the swarm fails; overrides the "
+                        "eval config's limits.budget (built-in default 3600)")
     p.add_argument("--grace", type=float, default=30.0,
                    help="seconds a run gets to exit after `done` before it is killed (default 30)")
     p.add_argument("--poll-interval", type=float, default=2.0,

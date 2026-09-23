@@ -38,9 +38,12 @@ FRIDA_AGENT_DIR = "/opt/frida-agent"
 
 
 def _briefing(target: TargetConfig) -> str:
-    """App-specific opening: the researcher role, the target's identity + where its primary APK
-    is staged, the app detail carried verbatim from the yaml `app:` block, and the objective.
-    Everything here varies by target — nothing app-specific is hardcoded in Python."""
+    """App-specific opening: the researcher role, the target's identity + where its primary APK is
+    staged, then the 3-source notes and the objective. The notes are the yaml-config ticket-03
+    concatenation — the worker role file's notes, then the app file's notes (`details`), then the
+    device file's notes — appended in that order, each skipped when its source carries none (so a
+    target with only app `details`, like the legacy shape, renders exactly as before). Everything
+    here varies by target/role — nothing app-specific is hardcoded in Python."""
     activity = f", main activity `{target.launch_activity}`" if target.launch_activity else ""
     parts = [
         "You are a mobile security researcher on an AUTHORIZED assessment. Your target is "
@@ -48,8 +51,10 @@ def _briefing(target: TargetConfig) -> str:
         f"in your home/working directory (`/root`, where your shell starts) as `{target.apk_name}` "
         f"— i.e. the absolute path `/root/{target.apk_name}`."
     ]
-    if target.details:
-        parts.append(target.details)
+    # 3-source notes, in order: worker role → app (`details`) → device. Blank sources drop out.
+    for note in (target.worker_notes, target.details, target.device_notes):
+        if note:
+            parts.append(note)
     parts.append(f"Your objective: **{target.objective}**")
     return "\n\n".join(parts)
 

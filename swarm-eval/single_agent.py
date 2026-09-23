@@ -46,7 +46,7 @@ from swarm_eval.agent_runner import (
 from swarm_eval.broker_client import Contract
 from swarm_eval.broker_client import acquire as broker_acquire
 from swarm_eval.broker_client import release as broker_release
-from swarm_eval.target import load_target
+from swarm_eval.target import load_run_config, load_target
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +88,7 @@ def run_single(
     # (`--target-apk`). The `-T spec=` below stays the positional itself — the in-task load_target
     # reads it back into the same TargetConfig (apk-agnostic).
     target = load_target(config.spec)
-    apk_args = ("--target-apk", target.broker_apk) if target.broker_apk else ()
+    apk_args = target.env_up_args()
     logger.info("single %s: leasing device (spec=%s, device=%s)",
                 run_id, config.spec, target.device_spec)
     contract: Contract = acquire(target.device_spec, *apk_args)
@@ -114,15 +114,31 @@ def run_single(
         release(contract.serial)
 
 
+def _pick(cli, cfg, default):
+    """CLI > config > built-in default: the CLI value when the flag was given (not None), else the
+    eval-config value when it set one (not None), else the launcher's built-in default. This is the
+    ticket-03 override rule — a run is replicable from the eval config, and any flag still wins for
+    that run without editing the file."""
+    if cli is not None:
+        return cli
+    if cfg is not None:
+        return cfg
+    return default
+
+
 def build_config(args: argparse.Namespace) -> SingleConfig:
-    """Map parsed args → `SingleConfig`. `--log-dir` is only forwarded when given, so the
+    """Map parsed args + the eval config's run knobs → `SingleConfig`, resolving CLI > config >
+    built-in default per knob (ticket 03). A CLI flag left unset is `None` here (see `parse_args`),
+    so the eval config's value stands; a legacy device yaml yields an empty `RunConfig`, so the
+    built-in defaults apply (no regression). `--log-dir` is only forwarded when given, so the
     under-`swarm-eval/` default stands otherwise."""
+    run = load_run_config(args.spec)
     kwargs: dict = dict(
         spec=args.spec,
-        model=args.model,
-        time_limit=args.time_limit,
-        working_limit=args.working_limit,
-        message_limit=args.message_limit,
+        model=_pick(args.model, run.model, DEFAULT_MODEL),
+        time_limit=_pick(args.time_limit, run.time_limit, DEFAULT_TIME_LIMIT),
+        working_limit=_pick(args.working_limit, run.working_limit, None),
+        message_limit=_pick(args.message_limit, run.message_limit, None),
     )
     if args.log_dir is not None:
         kwargs["log_root"] = args.log_dir
@@ -133,16 +149,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         prog="single_agent", description="Launch one dynamic-agent run (ticket 03)."
     )
-    p.add_argument("spec", help="device yaml selecting the target, e.g. devices/healthhub.yaml")
-    p.add_argument("--model", default=DEFAULT_MODEL,
-                   help="served provider model the sandboxed CC proxies to (the sweep lever)")
-    p.add_argument("--time-limit", type=int, default=DEFAULT_TIME_LIMIT,
-                   help=f"per-run Inspect --time-limit in seconds (default {DEFAULT_TIME_LIMIT})")
+    p.add_argument("spec", help="eval config or device yaml selecting the target/run, e.g. "
+                                "configs/evals/rasp_dummy.yaml")
+    # Run-knob flags default to None (not the built-in default) so an unset flag is distinguishable
+    # from one passed with the default value — `build_config` then applies CLI > config > default.
+    p.add_argument("--model", default=None,
+                   help="served provider model the sandboxed CC proxies to (the sweep lever); "
+                        f"overrides the eval config's `model` (built-in default {DEFAULT_MODEL})")
+    p.add_argument("--time-limit", type=int, default=None,
+                   help="per-run Inspect --time-limit in seconds; overrides the eval config's "
+                        f"limits.time_limit (built-in default {DEFAULT_TIME_LIMIT})")
     p.add_argument("--working-limit", type=int, default=None,
                    help="per-run Inspect --working-limit in seconds: caps WORKING time (excludes "
-                        "retry/rate-limit backoff), unlike --time-limit which caps wall time (opt-in)")
+                        "retry/rate-limit backoff), unlike --time-limit which caps wall time; "
+                        "overrides the eval config's limits.working_limit (opt-in)")
     p.add_argument("--message-limit", type=int, default=None,
-                   help="per-run Inspect --message-limit (opt-in)")
+                   help="per-run Inspect --message-limit; overrides the eval config's "
+                        "limits.message_limit (opt-in)")
     p.add_argument("--log-dir", type=Path, default=None,
                    help="log root (default swarm-eval/logs); the run logs into <root>/<run-id>/")
     return p.parse_args(argv)

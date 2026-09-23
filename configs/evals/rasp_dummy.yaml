@@ -1,11 +1,37 @@
-# Eval config (yaml-config ticket 02): the single file that names one replicable run by reference.
-# It points at the app under test, the device to provision it on, and the worker role — each a
-# bare name resolved under configs/{apps,devices,workers}/<name>.yaml (a path or *.yaml value is
-# also accepted). Run knobs (model, worker count, caps, limits) are still CLI flags in ticket 02;
-# ticket 03 folds those defaults in here too.
-#   python single_agent.py configs/evals/rasp_dummy.yaml
-#   python swarm.py        configs/evals/rasp_dummy.yaml --workers 3
+# Eval config (yaml-config ticket 02+03): the single file that fully specifies one replicable run
+# by reference. It points at the app under test, the device to provision it on, and the worker
+# roster — each a bare name resolved under configs/{apps,devices,workers}/<name>.yaml (a path or
+# *.yaml value is also accepted) — and it carries the RUN KNOBS as defaults (ticket 03): the
+# model, the worker count, and the caps/budget/limits. Any CLI flag OVERRIDES the matching config
+# value for that run (CLI > config > built-in default), so --model and --workers still drive the
+# model sweep and swarm sizing without editing this file:
+#   python single_agent.py configs/evals/rasp_dummy.yaml                 # model+limits from here
+#   python swarm.py        configs/evals/rasp_dummy.yaml                 # 1 worker (workers below)
+#   python swarm.py        configs/evals/rasp_dummy.yaml --workers 3     # CLI overrides the count
 
 app: rasp_dummy         # -> configs/apps/rasp_dummy.yaml  (owns target_apk + the mission slots)
 device: rasp_dummy      # -> configs/devices/rasp_dummy.yaml  (provisioning only)
-workers: dynamic        # -> configs/workers/dynamic.yaml  (the worker role)
+
+# The worker roster: a list of {role, count}. Each role names configs/workers/<role>.yaml (the
+# role file's `notes` open the worker's mission — the 3-source prompt: role -> app -> device). The
+# total worker count is the sum of the counts; --workers overrides it for a run.
+workers:
+  - role: dynamic       # -> configs/workers/dynamic.yaml
+    count: 1
+
+# The served provider model the sandboxed Claude Code proxies to (the sweep lever). --model wins.
+model: anthropic/claude-sonnet-4-5-20250929
+
+# Caps / budget / limits (all optional; each overridable by the matching CLI flag). time_limit is
+# the per-run Inspect wall-clock cap (termination layer b); budget is the swarm launcher's hard
+# wall-clock; cap is the fail-fast worker ceiling (mirrors the broker cap).
+limits:
+  time_limit: 1800      # per-run Inspect --time-limit (s)
+  budget: 3600          # swarm launcher hard wall-clock (s)
+  cap: 6                # max workers before fail-fast
+
+# Device-setting override whitelist (ticket 03): an eval config may override ONLY writable_system
+# and headless here (precedence eval > device > built-in default); every other device scalar stays
+# fixed in configs/devices/rasp_dummy.yaml. Left unset, so this run uses the device file's values.
+#   writable_system: true
+#   headless: true

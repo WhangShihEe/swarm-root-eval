@@ -90,9 +90,51 @@ def test_extract_self_report_absent_is_none():
     assert extract_self_report("no verdict here") is None
 
 
-def test_eval_config_mission_matches_legacy():
-    # yaml-config ticket 02: the rasp_dummy mission renders equivalently from the new eval config
-    # and the legacy combined yaml — the split moved fields between files, not their content.
+def test_eval_config_mission_carries_legacy_app_slots_plus_worker_notes():
+    # yaml-config ticket 03: the eval-config mission is the legacy mission's app content PLUS the
+    # worker role file's notes (the 3-source prompt now opens with the role instructions). It is no
+    # longer byte-equal to the legacy render (which had no worker file) — it is a superset: the same
+    # app slots (objective / success_signal / details) survive, and the role notes now precede them.
     ev = build_mission(load_target("configs/evals/rasp_dummy.yaml"), contract_path=CONTRACT)
     legacy = build_mission(RASP, contract_path=CONTRACT)
-    assert ev == legacy
+    assert ev != legacy
+    # the app content is unchanged by the split (objective, success bar, and the app detail prose)
+    assert RASP.objective in ev
+    assert RASP.success_signal in ev
+    assert RASP.details is not None and RASP.details in ev
+    # the dynamic role file's notes are folded in, ahead of the app detail (source order: role → app)
+    role_notes = load_target("configs/evals/rasp_dummy.yaml").worker_notes
+    assert role_notes and "dynamic-analysis agent" in role_notes
+    assert role_notes in ev
+    assert ev.index(role_notes) < ev.index(RASP.details)
+
+
+def test_build_mission_appends_the_three_note_sources_in_order():
+    # yaml-config ticket 03: the mission opens with the researcher line, then the worker-role
+    # notes, then the app notes (details), then the device notes — in that order. Each source is
+    # skipped when blank, so this asserts the full ordering with all three present.
+    from swarm_eval.target import TargetConfig
+
+    t = TargetConfig(
+        spec_path="e", device_spec="d", files={}, apk_name="a.apk",
+        package="p", label="L", objective="OBJ", success_signal="s",
+        worker_notes="ROLE-NOTES", details="APP-NOTES", device_notes="DEVICE-NOTES",
+    )
+    m = build_mission(t, contract_path=CONTRACT)
+    assert m.index("ROLE-NOTES") < m.index("APP-NOTES") < m.index("DEVICE-NOTES")
+    # the objective still follows the notes block
+    assert m.index("DEVICE-NOTES") < m.index("OBJ")
+
+
+def test_build_mission_skips_absent_note_sources():
+    # A target with only app notes (the legacy shape: no worker/device files) renders with just
+    # that source — no empty gaps from the missing worker/device notes.
+    from swarm_eval.target import TargetConfig
+
+    t = TargetConfig(
+        spec_path="e", device_spec="d", files={}, apk_name="a.apk",
+        package="p", label="L", objective="OBJ", success_signal="s", details="ONLY-APP",
+    )
+    m = build_mission(t, contract_path=CONTRACT)
+    assert "ONLY-APP" in m
+    assert "\n\n\n" not in m  # no doubled blank line from a skipped source

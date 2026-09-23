@@ -17,7 +17,13 @@ import pytest
 import yaml
 
 from swarm_eval.broker_client import repo_root
-from swarm_eval.target import load_target
+from swarm_eval.target import (
+    RunConfig,
+    TargetConfig,
+    WorkerRequest,
+    load_run_config,
+    load_target,
+)
 
 RASP_SPEC = "devices/rasp_dummy.yaml"
 HEALTHHUB_SPEC = "devices/healthhub.yaml"
@@ -273,3 +279,118 @@ def test_eval_config_app_owns_target_apk_no_frida_mode():
     dev = yaml.safe_load((_ROOT / "configs/devices/rasp_dummy.yaml").read_text())
     assert "app" not in dev and "target_apk" not in dev
     assert dev["name"] == "rasp_dummy" and dev["system_image"]
+
+
+# ---- yaml-config ticket 03: 3-source notes, device-override whitelist, run knobs ------------
+
+
+def _t(**kw) -> TargetConfig:
+    base = dict(
+        spec_path="e.yaml", device_spec="d.yaml", files={}, apk_name="a.apk",
+        package="p", label="L", objective="o", success_signal="s",
+    )
+    base.update(kw)
+    return TargetConfig(**base)
+
+
+def test_env_up_args_target_apk_only_when_no_overrides():
+    # No whitelist override set (both None) → only the --target-apk pair, unchanged from ticket 02.
+    assert _t(broker_apk="apks/x/base.apk").env_up_args() == (
+        "--target-apk", "apks/x/base.apk",
+    )
+    # a legacy target (no broker_apk, no overrides) forwards nothing
+    assert _t().env_up_args() == ()
+
+
+def test_env_up_args_emits_whitelisted_overrides_after_the_apk():
+    # An eval override becomes the env-up flag that wins over the device spec (eval > device).
+    assert _t(broker_apk="a.apk", writable_system=True, headless=False).env_up_args() == (
+        "--target-apk", "a.apk", "--writable-system", "--window",
+    )
+    assert _t(writable_system=False, headless=True).env_up_args() == (
+        "--frida-only", "--no-window",
+    )
+
+
+def test_eval_config_reads_worker_and_device_notes_and_overrides(tmp_path):
+    # The eval config folds in the worker role file's notes + the device file's notes (the 3-source
+    # mission) and may override ONLY writable_system/headless. Custom worker+device files carry
+    # marker notes so we can assert they were read; the app is the real rasp app file.
+    (tmp_path / "role.yaml").write_text("role: r\nnotes: WORKER-NOTE-MARK\n", encoding="utf-8")
+    (tmp_path / "dev.yaml").write_text(
+        "name: d\nsystem_image: img\nnotes: DEVICE-NOTE-MARK\n", encoding="utf-8"
+    )
+    ev = tmp_path / "eval.yaml"
+    ev.write_text(
+        "app: configs/apps/rasp_dummy.yaml\n"
+        f"device: {tmp_path / 'dev.yaml'}\n"
+        f"workers:\n  - role: {tmp_path / 'role.yaml'}\n    count: 2\n"
+        "writable_system: true\n"
+        "headless: false\n",
+        encoding="utf-8",
+    )
+    t = load_target(ev)
+    assert t.worker_notes == "WORKER-NOTE-MARK"
+    assert t.device_notes == "DEVICE-NOTE-MARK"
+    assert t.writable_system is True and t.headless is False
+    # the whitelist rides through env_up_args (device spec split out → --target-apk + overrides)
+    assert t.env_up_args() == (
+        "--target-apk", "apks/rasp_dummy/rasp_dummy.apk", "--writable-system", "--window",
+    )
+
+
+def test_eval_config_without_overrides_leaves_them_none():
+    # The shipped reference eval sets no writable_system/headless → both None (device file's values
+    # stand), and no device notes yet → None. The dynamic role's notes are read.
+    t = load_target(RASP_EVAL)
+    assert t.writable_system is None and t.headless is None
+    assert t.device_notes is None
+    assert t.worker_notes and "dynamic-analysis agent" in t.worker_notes
+
+
+def test_eval_config_workers_list_validates_every_role(tmp_path):
+    # The list shape validates each referenced role file, as loudly as ticket 02's bare-name ref.
+    ev = tmp_path / "eval.yaml"
+    ev.write_text(
+        "app: rasp_dummy\ndevice: rasp_dummy\n"
+        "workers:\n  - role: dynamic\n    count: 1\n  - role: nope\n    count: 1\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="workers"):
+        load_target(ev)
+
+
+# ---- load_run_config: the run knobs an eval config carries ----------------------------------
+
+def test_load_run_config_reads_model_workers_and_limits():
+    rc = load_run_config(RASP_EVAL)
+    assert rc.model == "anthropic/claude-sonnet-4-5-20250929"
+    assert rc.workers == (WorkerRequest(role="dynamic", count=1),)
+    assert rc.worker_count == 1
+    assert rc.time_limit == 1800
+    assert rc.budget == 3600.0
+    assert rc.cap == 6
+
+
+def test_load_run_config_sums_worker_counts(tmp_path):
+    ev = tmp_path / "eval.yaml"
+    ev.write_text(
+        "app: rasp_dummy\ndevice: rasp_dummy\n"
+        "workers:\n  - role: dynamic\n    count: 2\n  - role: dynamic\n    count: 3\n",
+        encoding="utf-8",
+    )
+    assert load_run_config(ev).worker_count == 5
+
+
+def test_load_run_config_bare_name_workers_has_no_count(tmp_path):
+    # The ticket-02 bare-name shape names a role but no count → worker_count None (CLI/default wins).
+    ev = tmp_path / "eval.yaml"
+    ev.write_text("app: rasp_dummy\ndevice: rasp_dummy\nworkers: dynamic\n", encoding="utf-8")
+    assert load_run_config(ev).worker_count is None
+
+
+def test_load_run_config_legacy_yaml_is_all_unset():
+    # A legacy combined device yaml carries no run knobs → an empty RunConfig (launcher defaults).
+    rc = load_run_config(RASP_SPEC)
+    assert rc == RunConfig()
+    assert rc.worker_count is None and rc.model is None

@@ -93,3 +93,36 @@ def test_main_returns_2_on_setup_error(monkeypatch, capsys):
     )
     assert cli.main([YAML, "-n", "9"]) == 2
     assert "over cap" in capsys.readouterr().err
+
+
+# ---- yaml-config ticket 03: run knobs from the eval config + CLI override -------------------
+
+EVAL_YAML = "configs/evals/rasp_dummy.yaml"
+
+
+def test_build_config_takes_run_knobs_from_the_eval_config():
+    # No CLI run-flags: the eval config's model, worker count, and caps/budget/limits drive the run.
+    config = cli.build_config(cli.parse_args([EVAL_YAML]))
+    assert config.model == "anthropic/claude-sonnet-4-5-20250929"
+    assert config.workers == 1          # workers: [{role: dynamic, count: 1}]
+    assert config.time_limit == 1800
+    assert config.budget == 3600.0
+    assert config.cap == 6
+
+
+def test_cli_workers_and_model_override_the_eval_config():
+    # --workers/--model still drive swarm sizing + the model sweep without editing the file.
+    config = cli.build_config(cli.parse_args([EVAL_YAML, "--workers", "3", "--model", "anthropic/x"]))
+    assert config.workers == 3          # CLI overrides the config's worker count
+    assert config.model == "anthropic/x"
+    # an unset flag leaves the config value
+    assert config.time_limit == 1800
+
+
+def test_legacy_yaml_falls_back_to_built_in_defaults():
+    # A legacy device yaml carries no run knobs → the SwarmConfig built-in defaults stand.
+    config = cli.build_config(cli.parse_args([YAML]))
+    assert config.workers == 1
+    assert config.model == cli.DEFAULT_MODEL
+    assert config.budget == cli.DEFAULT_BUDGET
+    assert config.cap == cli.DEFAULT_CAP
