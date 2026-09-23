@@ -18,6 +18,13 @@ dependencies = [
     # (via inspect-ai); declared here so the direct import is a first-class, pinned dependency.
     "pyyaml>=6",
 ]
+
+# The `swarm-view` review-UI command (swarm-improvements ticket 05). A console script exposing the
+# same builder as the root-level `swarm_view.py`, so `uv run swarm-view <run>` works as the named
+# command. `swarm.py`/`report.py` stay root-level scripts; this adds the literal `swarm-view` name.
+[project.scripts]
+swarm-view = "swarm_eval.viewer:main"
+
 # NOTE (swarm-improvements ticket 04): the post-run report (`report.py`) synthesizes insights via
 # the vendored safety-tooling submodule (repo root `safety-tooling/`). It is deliberately NOT a
 # resolved dependency here: safety-tooling hard-pins anthropic==0.49.0, openai==1.70.0 and
