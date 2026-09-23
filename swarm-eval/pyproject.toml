@@ -18,6 +18,14 @@ dependencies = [
     # (via inspect-ai); declared here so the direct import is a first-class, pinned dependency.
     "pyyaml>=6",
 ]
+# NOTE (swarm-improvements ticket 04): the post-run report (`report.py`) synthesizes insights via
+# the vendored safety-tooling submodule (repo root `safety-tooling/`). It is deliberately NOT a
+# resolved dependency here: safety-tooling hard-pins anthropic==0.49.0, openai==1.70.0 and
+# pydantic==2.11.1, each mutually exclusive with this harness's pins (anthropic 1.4.0 / openai
+# 3.x / inspect-swe's pydantic>=2.13) — `uv lock` is provably unsatisfiable with it in-tree. So
+# `report.safetytooling_infer` runs the call in the submodule's OWN environment via
+# `uv run --project ../safety-tooling`, keeping the harness resolution (and the model sweep, S2)
+# untouched. The pure `run_reader` imports no safetytooling at all.
 
 
 [build-system]
