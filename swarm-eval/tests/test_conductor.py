@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from swarm_eval import conductor as C
-from swarm_eval.agent_runner import ENV_DEVICE_CONTRACT
+from swarm_eval.agent_runner import ENV_DEVICE_CONTRACT, ENV_SERVED_MODEL
 from swarm_eval.broker_client import BrokerError, Contract, parse_contract
 from swarm_eval.conductor import (
     CONSOLE_FILENAME,
@@ -272,6 +272,8 @@ def test_build_run_env_injects_the_full_contract(tmp_path):
     assert env[ENV_INSPECT_LOG_DIR] == str(tmp_path / "logs" / "swarm-x")
     assert env[ENV_DEVICE_CONTRACT] == str(tmp_path / "worker-2.device")
     assert env[ENV_WORKER_IDS] == "worker-1,worker-2"
+    # ticket 03: a device-holding worker self-labels the served model (this swarm's --model).
+    assert env[ENV_SERVED_MODEL] == config.model
 
 
 def test_build_run_env_omits_device_contract_and_roster_when_absent(tmp_path):
@@ -305,6 +307,8 @@ def test_build_run_env_injects_the_role_map_for_a_device_less_worker(tmp_path):
     assert ENV_DEVICE_CONTRACT not in env
     assert env[ENV_ROLE] == ROLE_STATIC
     assert env[ENV_ROSTER] == "worker-1:dynamic,worker-3:static"
+    # ticket 03: a device-LESS worker (no contract) still self-labels the served model.
+    assert env[ENV_SERVED_MODEL] == cfg(tmp_path).model
 
 
 def test_build_run_argv_defaults_carry_a_time_limit(tmp_path):

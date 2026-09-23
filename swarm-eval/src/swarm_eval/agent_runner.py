@@ -43,6 +43,11 @@ from .broker_client import release as release
 # keys off (ticket 03).
 ENV_DEVICE_CONTRACT = "DEVICE_CONTRACT"
 ENV_INSPECT_LOG_DIR = "INSPECT_LOG_DIR"
+# The served provider model this run is billed for (the same string passed as `inspect eval
+# --model`). Injected so the spawned `dynamic_agent` stamps it into eval metadata and stops the
+# sandboxed CLI's built-in identity misleading a transcript reader (env-hardening ticket 03). Its
+# canonical definition lives in `served_model`; re-exported here as the launcher-side injection key.
+from .served_model import ENV_SERVED_MODEL as ENV_SERVED_MODEL
 
 # The spawnable agent unit both entrypoints run (1× by single_agent, N× by the conductor). Model
 # is the served provider model the sandbox's keyless CC proxies to — a sweep is this one flag
@@ -164,16 +169,20 @@ def build_run_env(
     contract_path: Path | str,
     log_dir: Path | str,
     board_env: dict[str, str] | None = None,
+    served_model: str | None = None,
 ) -> dict[str, str]:
     """The env injected into one run (merged over the inherited environment by the runner). Always
     the per-run pair — the injected `DEVICE_CONTRACT` file and the run's `INSPECT_LOG_DIR` — plus
     the caller's `board_env` when this is a swarm worker (the conductor supplies the board
-    coordinates; a single run passes none, and its absence is the "not a swarm" signal). Kept
-    minimal so a test can assert the injection exactly."""
+    coordinates; a single run passes none, and its absence is the "not a swarm" signal), plus the
+    served model (`SERVED_MODEL`) when the launcher supplies it, so the run self-labels the model
+    Inspect bills (ticket 03). Kept minimal so a test can assert the injection exactly."""
     env = {
         ENV_DEVICE_CONTRACT: str(contract_path),
         ENV_INSPECT_LOG_DIR: str(log_dir),
     }
+    if served_model:
+        env[ENV_SERVED_MODEL] = served_model
     if board_env:
         env.update(board_env)
     return env

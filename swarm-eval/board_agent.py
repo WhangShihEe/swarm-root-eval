@@ -32,6 +32,7 @@ from inspect_swe import claude_code
 from swarm_eval.board_tools import BOARD_MCP_NAME, ENV_AGENT_ID, board_tools_spec
 from swarm_eval.messageboard import ENV_BOARD_DIR, ENV_SWARM_ID, Board
 from swarm_eval.model_filters import merge_system_messages
+from swarm_eval.served_model import cli_identity_for, served_model, stamp_served_model
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +99,11 @@ def board_agent():
     logger.info("board demo: agent=%s swarm=%s board=%s", agent_id, swarm_id, board_root)
     return Task(
         dataset=MemoryDataset([Sample(input=build_prompt(agent_id), target="posted")]),
+        # Stamp the true served model into metadata, and self-identify as it when it is a Claude id,
+        # instead of hardcoding Sonnet 4.5 (env-hardening ticket 03).
+        setup=stamp_served_model(),
         solver=claude_code(
-            model_config="claude-sonnet-4-5-20250929",
+            model_config=cli_identity_for(served_model()),
             filter=merge_system_messages,
             bridged_tools=[board_tools_spec()],
         ),

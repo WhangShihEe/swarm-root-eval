@@ -20,6 +20,8 @@ from inspect_ai.model import (
 from inspect_ai.tool import ToolChoice, ToolInfo
 from inspect_swe import claude_code
 
+from swarm_eval.served_model import cli_identity_for, served_model, stamp_served_model
+
 TOKEN = "yes"
 APK = str(Path(__file__).resolve().parent.parent / "apks" / "rasp_dummy" / "rasp_dummy.apk")
 
@@ -35,7 +37,9 @@ def smoke():
                 files={"rasp_dummy.apk": APK},
             )
         ]),
-        solver=claude_code(model_config="claude-sonnet-4-5-20250929", filter=merge_system_messages),
+        # Self-label the true served model instead of hardcoding Sonnet 4.5 (env-hardening ticket 03).
+        setup=stamp_served_model(),
+        solver=claude_code(model_config=cli_identity_for(served_model()), filter=merge_system_messages),
         scorer=token_present(),
         sandbox="docker",
     )

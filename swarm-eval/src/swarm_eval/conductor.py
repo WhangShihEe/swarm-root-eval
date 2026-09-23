@@ -41,6 +41,7 @@ from .agent_runner import (
     DEFAULT_TIME_LIMIT,
     DEFAULT_WORKER_TASK,
     ENV_INSPECT_LOG_DIR,
+    ENV_SERVED_MODEL,
     RunHandle,
     RunSpec,
     Runner,
@@ -230,10 +231,18 @@ def build_run_env(
     if role_map:
         board_env[ENV_ROSTER] = ",".join(f"{aid}:{r}" for aid, r in sorted(role_map.items()))
     if device_contract is None:
-        # A contract-less role (no device) still carries its log dir + the forum coordinates.
-        return {ENV_INSPECT_LOG_DIR: str(log_dir), **board_env}
+        # A contract-less role (no device) still carries its log dir + the forum coordinates, plus
+        # the served-model self-label (ticket 03) mirroring this swarm's `--model`.
+        return {
+            ENV_INSPECT_LOG_DIR: str(log_dir),
+            ENV_SERVED_MODEL: config.model,
+            **board_env,
+        }
     return agent_runner.build_run_env(
-        contract_path=device_contract, log_dir=log_dir, board_env=board_env
+        contract_path=device_contract,
+        log_dir=log_dir,
+        board_env=board_env,
+        served_model=config.model,
     )
 
 
