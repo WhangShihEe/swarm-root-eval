@@ -26,3 +26,10 @@
 # AI bootstrap prompt. Internal only; never in public history. The public entry point is
 # the README, not this.
 /docs/handover/
+
+# Public test fixtures — the OWNED, synthetic toy targets ship with the repo (small, placeholder
+# brand, deliberately vulnerable, built for this eval). ONLY these specific owned APKs are tracked;
+# every other apks/* binary (the scraped real apps, and the heavier myhealthsg build) stays ignored.
+!/apks/rasp_dummy/rasp_dummy.apk
+!/apks/mytelco/app-debug.apk
+!/apks/mytelco/app-debug-packed.apk
