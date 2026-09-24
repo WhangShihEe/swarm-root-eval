@@ -9,7 +9,7 @@ actually runs, and the agent knows the mode exists so it uses it.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done — all 6 criteria met; criterion 5 (real image build + build-time runner check) and criterion 6 (on-device rasp_dummy canary) confirmed live in orchestrator Phase B
 
 Context: `.scratch/env-hardening/report.md` §S1 — device before/after already captured (shipped runner
 detaches at the "done" signal; a held session keeps the hook effective; an unfocused app is frozen/
@@ -30,3 +30,20 @@ reaped so its hook never fires).
       a held session, and a spawned app reaches the foreground.
 
 ## Comments
+
+## Phase B on-device confirmation (criterion 6) — PASSED
+
+Device: brokered writable-system pixel/android-15 (emulator-5554), rasp_dummy installed. Ran the
+SHIPPED `frida-run` inside the `swarm-eval-default` sandbox image against the app, pure-JS heartbeat
+probe (`send` every 1s, emits `done` at beat 3):
+
+- **Resident holds past `done`:** output showed `heartbeat n:1,2,3` → `done ok=True` PRINTED →
+  `heartbeat n:4,5,…,10` (`hooked:True` throughout) → `resident session ended after 10.0s window`.
+  The `done` did NOT tear the session down; the hook stayed effective across the whole held window.
+- **Auto-foreground via `am start`:** `[frida-run] foregrounded com.example.rasptarget/.MainActivity
+  via am start`, and a host-side `dumpsys activity activities` mid-hold showed
+  `topResumedActivity=com.example.rasptarget/.MainActivity` RESUMED (not the launcher) — `am start`
+  path taken, not `monkey`.
+
+Criterion 5 also confirmed: the real full `docker compose build` (corp CA present) succeeded and the
+build-time runner check printed `frida-py 17.17.0` / `frida-run --help` exit 0 / `objection 1.12.5`.

@@ -8,7 +8,7 @@ the feature ships to everyone inert and nothing org-specific is ever committed (
 **Blocked by:** None to build. The live traffic-capture part of validation pairs with 01 (a resident
 frida session is what holds a hook open long enough to capture traffic).
 
-**Status:** code-merged (device-validation pending) — criteria 1,2,4,5 done + merged into feat/yaml-config-extension; criterion 3 (on-device TLS probe to scamshield) deferred to orchestrator Phase B
+**Status:** done (install device-confirmed) — criteria 1,2,4,5 done + merged; criterion 3 PARTIAL: CA install into the Conscrypt APEX store confirmed live on-device; end-to-end TLS-interception probe not runnable from this emulator (no on-device openssl/curl/wget) and needs a confirmed corp-proxied egress path — documented as the remaining follow-up
 
 Context: `.scratch/env-hardening/report.md` §S2. Mirrors the existing precedent where the sandbox
 already trusts an out-of-band corporate CA kept in a gitignored certs location. Device-confirmed on
@@ -27,3 +27,18 @@ android-15: the runtime trust store is the Conscrypt APEX, not the legacy system
       trusted CA alone will not defeat, and internal-only backend hosts need DNS stubbing.
 
 ## Comments
+
+## Phase B on-device confirmation (criterion 3) — CA INSTALL PASSED; live TLS probe deferred
+
+On the same brokered writable-system device, ticket-05 env-up ran automatically (corp CA present in
+the gitignored `swarm-eval/certs/`). Broker log: `device-ca: installed 2 CA file(s) into
+/apex/com.android.conscrypt/cacerts`. On-device the Conscrypt APEX cacerts store held 150 certs vs
+147 in the legacy `/system/etc/security/cacerts` — the corp CA landed in the RUNTIME-HONORED APEX
+store, as designed.
+
+The live TLS-interception probe (openssl s_client to a proxied host) was NOT run: this android-15
+emulator ships no `openssl`/`curl`/`wget` in its shell, so a device-trust-store TLS check needs an
+app-level / Java-frida HTTPS probe, AND it is only meaningful if the emulator's egress is corp-
+proxied (unconfirmed here — the docker BUILD egress is proxied, but the emulator's runtime egress
+path is separate). Remaining follow-up, consistent with this ticket's own "TLS pinning + DNS
+stubbing are separate" note.
