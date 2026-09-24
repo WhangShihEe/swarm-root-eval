@@ -1,0 +1,319 @@
+{
+  "subscribers": [
+    {
+      "id": "sub-1001",
+      "credentials": {
+        "onePassId": "weiming.tan@gmail.com",
+        "loginMobile": "+65 9123 4567",
+        "password": "Passw0rd!"
+      },
+      "accountNo": "8-2041-7788",
+      "onePassId": "weiming.tan@gmail.com",
+      "profile": {
+        "fullName": "Tan Wei Ming",
+        "nric": "S8412345A",
+        "dob": "1984-06-21",
+        "address": "Blk 128 Bishan Street 12, #10-345, Singapore 570128",
+        "contactEmail": "weiming.tan@gmail.com",
+        "contactMobile": "+65 9123 4567"
+      },
+      "line": {
+        "label": "Mobile",
+        "msisdn": "+65 9123 4567",
+        "iccid": "8965010012345678901",
+        "imsi": "525010123456789",
+        "eid": "89049032005008882600123456789012",
+        "simType": "eSIM",
+        "simStatus": "Active"
+      },
+      "plan": {
+        "name": "GOMO 100GB 5G",
+        "contractStart": "2024-03-15",
+        "contractEnd": "2026-03-14",
+        "recontractEligible": "2025-12-15"
+      },
+      "usage": {
+        "dataLeftGb": 79.2,
+        "dataTotalGb": 100,
+        "talktimeLeftMins": 842,
+        "talktimeTotalMins": 1000,
+        "smsLeft": 480,
+        "smsTotal": 500,
+        "daysToReset": 12,
+        "roamingDataLeftGb": 0
+      },
+      "billing": {
+        "amountDue": 68.9,
+        "dueDate": "2026-10-10",
+        "lastPaidAmount": 68.9,
+        "lastPaidDate": "2026-09-08",
+        "billingEmail": "weiming.tan@gmail.com",
+        "autoPay": true,
+        "paymentMethod": "VISA •••• 4291",
+        "history": [
+          { "month": "2026-09", "amount": 68.9, "status": "Paid" },
+          { "month": "2026-08", "amount": 68.9, "status": "Paid" },
+          { "month": "2026-07", "amount": 74.2, "status": "Paid" },
+          { "month": "2026-06", "amount": 68.9, "status": "Paid" },
+          { "month": "2026-05", "amount": 68.9, "status": "Paid" },
+          { "month": "2026-04", "amount": 91.5, "status": "Paid" }
+        ]
+      },
+      "rewards": {
+        "tier": "Red Member",
+        "renewalDate": "2027-01-31",
+        "vouchers": [
+          { "id": "v-8801", "title": "$5 off GrabFood", "expires": "2026-11-30" },
+          { "id": "v-8802", "title": "1-for-1 Cathay Cineplexes", "expires": "2026-10-31" }
+        ]
+      },
+      "linkedLines": [
+        { "label": "Mobile (Child)", "msisdn": "+65 8234 5678", "owner": "Tan Xin Yi" }
+      ],
+      "circleNominees": [
+        { "name": "Tan Xin Yi", "relationship": "Daughter", "msisdn": "+65 8234 5678" }
+      ]
+    },
+    {
+      "id": "sub-1002",
+      "credentials": {
+        "onePassId": "+65 8777 2244",
+        "loginMobile": "+65 8777 2244",
+        "password": "Merlion#2024"
+      },
+      "accountNo": "8-3390-1120",
+      "onePassId": "+65 8777 2244",
+      "profile": {
+        "fullName": "Nurul Aisyah Binte Rahman",
+        "nric": "S9223456B",
+        "dob": "1992-11-03",
+        "address": "Blk 51 Tampines Ave 4, #07-118, Singapore 521051",
+        "contactEmail": "nurul.aisyah@outlook.sg",
+        "contactMobile": "+65 8777 2244"
+      },
+      "line": {
+        "label": "Mobile",
+        "msisdn": "+65 8777 2244",
+        "iccid": "8965010098765432109",
+        "imsi": "525010987654321",
+        "eid": "89049032005008882600987654321098",
+        "simType": "Physical",
+        "simStatus": "Active"
+      },
+      "plan": {
+        "name": "Singtel Star Plan 50GB",
+        "contractStart": "2023-08-01",
+        "contractEnd": "2025-07-31",
+        "recontractEligible": "2025-05-01"
+      },
+      "usage": {
+        "dataLeftGb": 12.4,
+        "dataTotalGb": 50,
+        "talktimeLeftMins": 210,
+        "talktimeTotalMins": 300,
+        "smsLeft": 95,
+        "smsTotal": 100,
+        "daysToReset": 5,
+        "roamingDataLeftGb": 3.0
+      },
+      "billing": {
+        "amountDue": 45.0,
+        "dueDate": "2026-10-05",
+        "lastPaidAmount": 45.0,
+        "lastPaidDate": "2026-09-03",
+        "billingEmail": "nurul.aisyah@outlook.sg",
+        "autoPay": false,
+        "paymentMethod": "MASTERCARD •••• 7712",
+        "history": [
+          { "month": "2026-09", "amount": 45.0, "status": "Paid" },
+          { "month": "2026-08", "amount": 52.8, "status": "Paid" },
+          { "month": "2026-07", "amount": 45.0, "status": "Paid" },
+          { "month": "2026-06", "amount": 45.0, "status": "Paid" },
+          { "month": "2026-05", "amount": 63.2, "status": "Paid" },
+          { "month": "2026-04", "amount": 45.0, "status": "Paid" }
+        ]
+      },
+      "rewards": {
+        "tier": "Gold Member",
+        "renewalDate": "2026-12-31",
+        "vouchers": [
+          { "id": "v-9001", "title": "$10 off Shopee", "expires": "2026-12-15" }
+        ]
+      },
+      "linkedLines": [],
+      "circleNominees": [
+        { "name": "Rahman Bin Hassan", "relationship": "Father", "msisdn": "+65 9012 3344" }
+      ]
+    },
+    {
+      "id": "sub-1003",
+      "credentials": {
+        "onePassId": "raj.kumar@yahoo.com.sg",
+        "loginMobile": "+65 9345 6677",
+        "password": "Kum@r2025"
+      },
+      "accountNo": "8-5567-4433",
+      "onePassId": "raj.kumar@yahoo.com.sg",
+      "profile": {
+        "fullName": "Rajesh Kumar s/o Anand",
+        "nric": "S7534567C",
+        "dob": "1975-02-14",
+        "address": "22 Serangoon Garden Way, Singapore 555940",
+        "contactEmail": "raj.kumar@yahoo.com.sg",
+        "contactMobile": "+65 9345 6677"
+      },
+      "line": {
+        "label": "Mobile",
+        "msisdn": "+65 9345 6677",
+        "iccid": "8965010055667788990",
+        "imsi": "525010556677889",
+        "eid": "89049032005008882600556677889900",
+        "simType": "eSIM",
+        "simStatus": "Suspended"
+      },
+      "plan": {
+        "name": "Singtel Priority Plan 200GB",
+        "contractStart": "2024-11-20",
+        "contractEnd": "2026-11-19",
+        "recontractEligible": "2026-08-20"
+      },
+      "usage": {
+        "dataLeftGb": 156.7,
+        "dataTotalGb": 200,
+        "talktimeLeftMins": 1500,
+        "talktimeTotalMins": 1500,
+        "smsLeft": 1000,
+        "smsTotal": 1000,
+        "daysToReset": 21,
+        "roamingDataLeftGb": 0
+      },
+      "billing": {
+        "amountDue": 112.35,
+        "dueDate": "2026-10-18",
+        "lastPaidAmount": 112.35,
+        "lastPaidDate": "2026-09-16",
+        "billingEmail": "raj.kumar@yahoo.com.sg",
+        "autoPay": true,
+        "paymentMethod": "AMEX •••• 1005",
+        "history": [
+          { "month": "2026-09", "amount": 112.35, "status": "Paid" },
+          { "month": "2026-08", "amount": 112.35, "status": "Paid" },
+          { "month": "2026-07", "amount": 128.9, "status": "Paid" },
+          { "month": "2026-06", "amount": 112.35, "status": "Paid" },
+          { "month": "2026-05", "amount": 112.35, "status": "Paid" },
+          { "month": "2026-04", "amount": 145.6, "status": "Paid" }
+        ]
+      },
+      "rewards": {
+        "tier": "Platinum Member",
+        "renewalDate": "2027-03-31",
+        "vouchers": [
+          { "id": "v-7001", "title": "$20 off Singtel Shop", "expires": "2027-01-31" },
+          { "id": "v-7002", "title": "Free 5GB Roaming Pass", "expires": "2026-12-31" },
+          { "id": "v-7003", "title": "$15 off Klook", "expires": "2026-11-15" }
+        ]
+      },
+      "linkedLines": [
+        { "label": "Mobile (Spouse)", "msisdn": "+65 9456 7788", "owner": "Priya Rajesh" },
+        { "label": "Broadband", "msisdn": "N/A", "owner": "Rajesh Kumar s/o Anand" }
+      ],
+      "circleNominees": [
+        { "name": "Priya Rajesh", "relationship": "Spouse", "msisdn": "+65 9456 7788" }
+      ]
+    },
+    {
+      "id": "sub-1004",
+      "credentials": {
+        "onePassId": "chloe.lim@hotmail.com",
+        "loginMobile": "+65 8123 9900",
+        "password": "Ch1oe$Lim"
+      },
+      "accountNo": "8-7712-6655",
+      "onePassId": "chloe.lim@hotmail.com",
+      "profile": {
+        "fullName": "Chloe Lim Hui Fen",
+        "nric": "G6789012N",
+        "dob": "1998-09-30",
+        "address": "Blk 6 Toa Payoh Lorong 7, #04-88, Singapore 310006",
+        "contactEmail": "chloe.lim@hotmail.com",
+        "contactMobile": "+65 8123 9900"
+      },
+      "line": {
+        "label": "Mobile",
+        "msisdn": "+65 8123 9900",
+        "iccid": "8965010077126655001",
+        "imsi": "525010771266550",
+        "eid": "89049032005008882600771266550012",
+        "simType": "Physical",
+        "simStatus": "Active"
+      },
+      "plan": {
+        "name": "GOMO 30GB 5G",
+        "contractStart": "2025-01-10",
+        "contractEnd": "2025-01-09",
+        "recontractEligible": "2025-01-10",
+        "contractType": "SIM-only (no contract)"
+      },
+      "usage": {
+        "dataLeftGb": 4.8,
+        "dataTotalGb": 30,
+        "talktimeLeftMins": 60,
+        "talktimeTotalMins": 100,
+        "smsLeft": 40,
+        "smsTotal": 50,
+        "daysToReset": 2,
+        "roamingDataLeftGb": 0
+      },
+      "billing": {
+        "amountDue": 25.0,
+        "dueDate": "2026-10-02",
+        "lastPaidAmount": 25.0,
+        "lastPaidDate": "2026-09-02",
+        "billingEmail": "chloe.lim@hotmail.com",
+        "autoPay": true,
+        "paymentMethod": "VISA •••• 8830",
+        "history": [
+          { "month": "2026-09", "amount": 25.0, "status": "Paid" },
+          { "month": "2026-08", "amount": 25.0, "status": "Paid" },
+          { "month": "2026-07", "amount": 25.0, "status": "Paid" },
+          { "month": "2026-06", "amount": 30.5, "status": "Paid" },
+          { "month": "2026-05", "amount": 25.0, "status": "Paid" },
+          { "month": "2026-04", "amount": 25.0, "status": "Paid" }
+        ]
+      },
+      "rewards": {
+        "tier": "Red Member",
+        "renewalDate": "2026-11-30",
+        "vouchers": []
+      },
+      "linkedLines": [],
+      "circleNominees": []
+    }
+  ],
+  "shopAddons": [
+    {
+      "category": "Roaming",
+      "items": [
+        { "id": "addon-roam-asia", "name": "ReadyRoam Asia", "priceFrom": 12, "unit": "3 days", "description": "Unlimited data across 15 Asian destinations." },
+        { "id": "addon-roam-global", "name": "ReadyRoam Global", "priceFrom": 29, "unit": "5 days", "description": "Data roaming in 100+ destinations worldwide." },
+        { "id": "addon-roam-boost", "name": "Roaming Data Boost 5GB", "priceFrom": 18, "unit": "5GB", "description": "Top-up roaming data when you run low overseas." }
+      ]
+    },
+    {
+      "category": "5G & Usage",
+      "items": [
+        { "id": "addon-5g-priority", "name": "5G Priority Network", "priceFrom": 8, "unit": "mth", "description": "Priority access on the 5G network for faster speeds." },
+        { "id": "addon-data-10gb", "name": "Local Data Add-On 10GB", "priceFrom": 8, "unit": "10GB", "description": "Extra local data valid until your next reset." },
+        { "id": "addon-data-unli-weekend", "name": "Unlimited Weekend Data", "priceFrom": 5, "unit": "weekend", "description": "Unlimited local data every Saturday and Sunday." }
+      ]
+    },
+    {
+      "category": "Protection",
+      "items": [
+        { "id": "addon-device-care", "name": "Device Care+", "priceFrom": 9.9, "unit": "mth", "description": "Cracked-screen and accidental-damage cover for your phone." },
+        { "id": "addon-cyber-secure", "name": "McAfee Mobile Secure", "priceFrom": 4.9, "unit": "mth", "description": "Antivirus, safe browsing and identity monitoring." },
+        { "id": "addon-scam-shield", "name": "ScamShield Premium", "priceFrom": 2.9, "unit": "mth", "description": "Advanced call and SMS scam filtering." }
+      ]
+    }
+  ]
+}

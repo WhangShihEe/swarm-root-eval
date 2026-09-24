@@ -35,11 +35,13 @@ from swarm_eval.agent_runner import (
     DEFAULT_MODEL,
     DEFAULT_TIME_LIMIT,
     DEFAULT_WORKER_TASK,
+    BackendProcess,
     RunSpec,
     Runner,
     build_run_argv,
     build_run_env,
     mint_run_id,
+    start_backend,
     subprocess_runner,
     swarm_eval_dir,
     write_contract,
@@ -73,6 +75,7 @@ def run_single(
     acquire: Callable[..., Contract] = broker_acquire,
     release: Callable[[str], None] = broker_release,
     runner: Runner = subprocess_runner,
+    backend: Callable[..., BackendProcess | None] = start_backend,
 ) -> int:
     """Lease one device → inject its contract → launch one `dynamic_agent` run → release, always.
 
@@ -93,7 +96,12 @@ def run_single(
     logger.info("single %s: leasing device (spec=%s, device=%s)",
                 run_id, config.spec, target.device_spec)
     contract: Contract = acquire(target.device_spec, *apk_args)
+    backend_handle: BackendProcess | None = None
     try:
+        # Bring up the target's host companion server (if it declares one) BEFORE the agent runs,
+        # blocking on its health check so a dead backend fails the run fast; torn down in the
+        # `finally` alongside the device. A no-op for every target with no `backend:` block.
+        backend_handle = backend(target.backend, log_dir=log_dir)
         contract_path = write_contract(contract, log_dir / "device.contract")
         argv = build_run_argv(
             spec=config.spec,
@@ -115,6 +123,9 @@ def run_single(
         logger.info("single %s: eval finished (rc=%s); log in %s", run_id, rc, log_dir)
         return rc
     finally:
+        if backend_handle is not None:
+            logger.info("single %s: stopping backend server", run_id)
+            backend_handle.stop()
         logger.info("single %s: releasing device %s", run_id, contract.serial)
         release(contract.serial)
 

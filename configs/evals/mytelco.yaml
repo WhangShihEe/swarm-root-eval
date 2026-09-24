@@ -1,0 +1,31 @@
+# Eval config: the single file that fully specifies one replicable MyTelco SG run by reference. It
+# points at the app under test, the device to provision it on, and the worker roster, and carries
+# the run knobs (model, worker count, caps/budget/limits). Any CLI flag OVERRIDES the matching
+# config value for that run (CLI > config > built-in default):
+#   python single_agent.py configs/evals/mytelco.yaml                 # model+limits from here
+#   python swarm.py        configs/evals/mytelco.yaml                 # 1 worker (workers below)
+#   python swarm.py        configs/evals/mytelco.yaml --workers 3     # CLI overrides the count
+#
+# RUNTIME DEPENDENCY: this target needs its host backend up — the launcher starts it automatically
+# from the app file's `backend:` block (apks/mytelco/backend, `npm start` on :8090) and tears it
+# down at the end. Run `npm ci` in apks/mytelco/backend ONCE first so `npm start` can boot; the
+# run fails fast at the /health check if the backend is down.
+
+app: mytelco            # -> configs/apps/mytelco.yaml  (owns target_apk + backend + the mission)
+device: pixel           # -> configs/devices/pixel.yaml  (shared provisioning-only emulator)
+
+# The worker roster: a list of {role, count}. Each role names configs/workers/<role>.yaml. The
+# total worker count is the sum of the counts; --workers overrides it for a run.
+workers:
+  - role: dynamic       # -> configs/workers/dynamic.yaml
+    count: 1
+
+# The served provider model the sandboxed Claude Code proxies to (the sweep lever). --model wins.
+model: anthropic/claude-sonnet-4-5-20250929
+
+# Caps / budget / limits (all optional; each overridable by the matching CLI flag). Matches
+# myhealthsg (a multi-step exploit phase follows the RASP bypass), not the lighter rasp_dummy.
+limits:
+  time_limit: 3600      # per-run Inspect --time-limit (s)
+  budget: 5400          # swarm launcher hard wall-clock (s)
+  cap: 6                # max workers before fail-fast

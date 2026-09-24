@@ -858,3 +858,51 @@ def test_run_device_less_only_roster_fails_fast(tmp_path):
     with pytest.raises(SwarmError, match="at least one `dynamic`"):
         _run(config, broker, make_runner({}), FakeClock())
     assert broker.n == 0  # nothing acquired
+
+
+# ---- backend companion server: up before the swarm, down in the finally (mytelco integration) --
+
+class FakeBackendLauncher:
+    """Injected backend starter that doubles as the handle: records the spec + every stop, and
+    logs start/stop into a shared order list so bracketing around the swarm is checkable."""
+
+    def __init__(self, order):
+        self.order = order
+        self.spec = None
+        self.stops = 0
+
+    def __call__(self, spec, *, log_dir):
+        self.spec = spec
+        self.order.append("backend-start")
+        return self
+
+    def stop(self, **kw):
+        self.stops += 1
+        self.order.append("backend-stop")
+
+
+def test_run_starts_and_stops_the_target_backend(tmp_path):
+    # mytelco declares a :8090 backend; the conductor brings it up before any worker launches and
+    # tears it down in the finally — the same lifecycle as the webview and the device lease.
+    order: list[str] = []
+    backend = FakeBackendLauncher(order)
+    config = cfg(tmp_path, workers=1, spec="configs/evals/mytelco.yaml")
+    broker = FakeBroker()
+    clock = FakeClock()
+    result = Conductor(
+        config,
+        runner=make_runner({"worker-1": "success"}),
+        acquire=broker.acquire,
+        release=broker.release,
+        clock=clock,
+        sleep=clock.sleep,
+        view_launcher=FakeViewLauncher(),
+        backend_launcher=backend,
+    ).run()
+
+    assert result.verdict.value == "SUCCESS"
+    assert backend.spec is not None and backend.spec.port == 8090
+    assert backend.stops == 1
+    # backend started before the run began and stopped at teardown
+    assert order[0] == "backend-start" and order[-1] == "backend-stop"
+    assert broker.released == ["emulator-5554"]

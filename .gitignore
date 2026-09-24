@@ -1,5 +1,18 @@
-# Local APK corpus for the harness — large, app-owned binaries, never committed.
-/apks/
+# Local APK corpus for the harness — large, app-owned binaries, never committed. Written as
+# `/apks/*` (ignore the CONTENTS) rather than `/apks/` (ignore the dir) so a specific subtree can
+# be re-included below: git will not descend into a dir it has ignored outright.
+/apks/*
+
+# Exception — a target may vendor its host backend SOURCE in-repo so the target is self-contained
+# (mytelco, myhealthsg). Track that source while the *.apk binaries beside it stay ignored: for
+# every target dir, re-include the dir, re-ignore its direct entries (the APKs stay out), then
+# re-include the `backend/` subtree — and finally re-ignore the backend's installed deps, which are
+# `npm ci`-ed at setup, not committed (large + reproducible from package-lock.json). Generic over
+# `apks/*/backend/`, so a new target's vendored backend needs no gitignore change.
+!/apks/*/
+/apks/*/*
+!/apks/*/backend/
+/apks/*/backend/node_modules/
 
 # Pool engine runtime state — registry + per-slot AVD homes (ticket 05). Machine-local,
 # rebuilt from scratch on every acquire; never committed. Override with POOL_DIR.

@@ -24,6 +24,8 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import time
+import urllib.request
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -35,6 +37,7 @@ from typing import Callable, Protocol
 from .broker_client import Contract
 from .broker_client import acquire as acquire
 from .broker_client import release as release
+from .target import BackendSpec
 
 # The launcher→run injection contract, per run: a device contract is ALWAYS injected as a host
 # file whose path rides in `DEVICE_CONTRACT`; `INSPECT_LOG_DIR` is where Inspect writes the run's
@@ -253,3 +256,126 @@ def subprocess_runner(spec: RunSpec) -> RunProcess:
     finally:
         console.close()  # the child inherited its own dup at exec; drop the parent's copy
     return RunProcess(proc, detached=True)
+
+
+# ---- host companion server (a target's backend), started/stopped around a run -----------------
+#
+# A few targets need a host server running for the app to function (`myhealthsg`, `mytelco`): the
+# app reaches it from the emulator at `http://10.0.2.2:<port>`. That dependency was documented in
+# prose only; `start_backend` makes it a lifecycle the launcher owns, symmetric with the device
+# lease — started before the agent begins, torn down in the launcher's `finally`. Both launchers
+# call it unconditionally; it is a no-op (returns None) for every target with no `backend:` block.
+
+
+class BackendProcess:
+    """A handle over a target's host companion server (`subprocess.Popen` in its own session), so
+    a launcher can tear it down however the run ends. Started with `start_new_session` so `stop`
+    signals the whole process GROUP (`os.killpg`) — a shell/`npm` wrapper's real server child
+    (`node`) dies with it, no orphan holding the port for the next run. `stop` is best-effort and
+    idempotent, mirroring `RunProcess`' group-kill and the conductor's `_stop_view`.
+
+    A `None` proc is an ADOPTED backend — already running when the launcher checked, so
+    `start_backend` did not spawn it. We do not own it: `stop` is a no-op and `poll` reports it as
+    still running. This keeps a heavy, persistent backend (e.g. OpenMRS + a BFF, brought up once
+    across many runs) from being torn down by a run that merely used it."""
+
+    def __init__(self, proc: subprocess.Popen | None) -> None:
+        self._proc = proc
+
+    def poll(self) -> int | None:
+        return None if self._proc is None else self._proc.poll()
+
+    def wait(self, timeout: float | None = None) -> int:
+        return 0 if self._proc is None else self._proc.wait(timeout)
+
+    def stop(self, *, grace: float = 5.0) -> None:
+        """SIGTERM the server's process group, allow `grace` to exit, then SIGKILL a survivor.
+        A no-op for an adopted (`None`) backend or one that already exited; never raises (teardown
+        must not mask the run's own error)."""
+        if self._proc is None or self._proc.poll() is not None:
+            return
+        try:
+            os.killpg(os.getpgid(self._proc.pid), signal.SIGTERM)
+        except ProcessLookupError:
+            return  # already gone
+        try:
+            self._proc.wait(timeout=grace)
+            return
+        except Exception:  # noqa: BLE001 — didn't exit in grace; escalate to SIGKILL
+            pass
+        try:
+            os.killpg(os.getpgid(self._proc.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
+def _health_ok(url: str) -> bool:
+    """True when a GET on `url` returns a 2xx — the readiness signal. Any error (connection
+    refused while the server is still binding, timeout, non-2xx) is just "not ready yet"."""
+    try:
+        with urllib.request.urlopen(url, timeout=2) as resp:  # noqa: S310 — fixed local health URL
+            return 200 <= resp.status < 300
+    except Exception:  # noqa: BLE001 — not up yet
+        return False
+
+
+def start_backend(
+    spec: BackendSpec | None,
+    *,
+    log_dir: Path,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> BackendProcess | None:
+    """Start a target's host companion server and block until it is ready, so a dead backend fails
+    the run FAST (before the agent burns its budget on an app that can't reach its API) rather than
+    mid-exploit. Returns `None` when `spec` is `None` — every target with no `backend:` block — so
+    both launchers call it unconditionally.
+
+    The process is detached into its own session (`start_new_session`) so `BackendProcess.stop`
+    reaps the real server under an `npm`/shell wrapper; its output streams to `backend.log` under
+    the run's log dir. When `spec.health_url` is set the launcher polls it until 2xx; if the
+    process dies first, or the URL is not ready within `spec.ready_timeout`, the process is torn
+    down and a `RuntimeError` is raised (the launcher's `finally` then releases the device). With
+    no `health_url` the server is started but not waited on (best-effort). `clock`/`sleep` are
+    injected so a test drives the readiness loop without real time.
+
+    ADOPT-IF-RUNNING: when `health_url` is already answering 2xx, the backend is taken as already
+    up (brought up once, out of band — the norm for a heavy OpenMRS + BFF stack) and adopted
+    rather than re-spawned: no duplicate process to collide on the port, and the returned handle
+    does NOT own it, so teardown leaves it running for the next run."""
+    if spec is None:
+        return None
+    if spec.health_url and _health_ok(spec.health_url):
+        return BackendProcess(None)  # already up — adopt it; we won't spawn or stop it
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "backend.log"
+    log = open(log_path, "w", encoding="utf-8")
+    try:
+        proc = subprocess.Popen(
+            list(spec.command),
+            cwd=spec.cwd,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    finally:
+        log.close()  # the child kept its own dup at exec; drop the parent's copy
+    handle = BackendProcess(proc)
+    if not spec.health_url:
+        return handle
+    deadline = clock() + spec.ready_timeout
+    while True:
+        if _health_ok(spec.health_url):
+            return handle
+        if proc.poll() is not None:
+            raise RuntimeError(
+                f"backend exited early (rc={proc.returncode}) before {spec.health_url} was "
+                f"ready — see {log_path}"
+            )
+        if clock() >= deadline:
+            handle.stop()
+            raise RuntimeError(
+                f"backend not ready: {spec.health_url} did not return 2xx within "
+                f"{spec.ready_timeout:g}s — see {log_path}"
+            )
+        sleep(0.5)

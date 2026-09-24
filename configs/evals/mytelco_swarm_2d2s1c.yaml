@@ -1,0 +1,22 @@
+# Eval config: MyTelco SG attacked by a 5-worker mixed-role swarm — 2 dynamic (device) + 2 static
+# (device-less analysts) + 1 coordinator. Only the 2 dynamic workers lease a device. Backend
+# (:8090) is ensured-up by the launcher (adopted if already running). Bedrock Opus 4.8 via proxy.
+#   python swarm.py configs/evals/mytelco_swarm_2d2s1c.yaml
+
+app: mytelco            # -> configs/apps/mytelco.yaml (owns APK + backend + mission)
+device: pixel           # -> configs/devices/pixel.yaml (shared emulator)
+
+workers:
+  - role: dynamic
+    count: 2
+  - role: static
+    count: 2
+  - role: coordinator
+    count: 1
+
+model: openai-api/litellm/bedrock-claude-opus-4.8
+
+limits:
+  time_limit: 3600
+  budget: 2700
+  cap: 6

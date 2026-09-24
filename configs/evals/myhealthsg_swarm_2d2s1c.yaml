@@ -1,0 +1,23 @@
+# Eval config: MyHealth SG attacked by a 5-worker mixed-role swarm — 2 dynamic (device) + 2 static
+# (device-less analysts) + 1 coordinator. Only the 2 dynamic workers lease a broker device (2
+# emulators). Backend (BFF :3000) is ensured-up once by the launcher (adopted if already running);
+# OpenMRS :8080 is a persistent out-of-band prereq. Bedrock Opus 4.8 via the LiteLLM proxy.
+#   python swarm.py configs/evals/myhealthsg_swarm_2d2s1c.yaml
+
+app: myhealthsg         # -> configs/apps/myhealthsg.yaml (owns APK + backend + mission)
+device: myhealthsg      # -> configs/devices/myhealthsg.yaml
+
+workers:
+  - role: dynamic       # leases a device; drives the runtime bypass + on-device exploits
+    count: 2
+  - role: static        # device-less; decompiles the packed APK, posts findings to the board
+    count: 2
+  - role: coordinator   # device-less; directs the others via board + DMs
+    count: 1
+
+model: openai-api/litellm/bedrock-claude-opus-4.8
+
+limits:
+  time_limit: 3600      # per-run Inspect --time-limit (s)
+  budget: 2700          # swarm launcher hard wall-clock (s) — 45 min; CLI --budget overrides
+  cap: 6                # roster total is 5 ≤ 6

@@ -228,3 +228,66 @@ def test_run_single_forwards_eval_config_device_overrides_to_the_broker(tmp_path
     )
     (spec, *extra) = broker.acquired[0]
     assert extra == ["--target-apk", "apks/rasp_dummy/rasp_dummy.apk", "--frida-only", "--window"]
+
+
+# ---- backend companion server: started before the run, stopped in the finally (mytelco) --------
+
+MYTELCO = "configs/evals/mytelco.yaml"
+
+
+class FakeBackend:
+    """Injected `backend` starter that doubles as the handle: records the spec it was started with
+    and every stop(); appends to a shared order list so start/run/stop ordering is checkable."""
+
+    def __init__(self, order):
+        self.order = order
+        self.spec = None
+        self.stops = 0
+
+    def __call__(self, spec, *, log_dir):
+        self.spec = spec
+        self.order.append("start")
+        return self
+
+    def stop(self, **kw):
+        self.stops += 1
+        self.order.append("stop")
+
+
+def test_run_single_starts_backend_before_run_then_stops_it(tmp_path):
+    broker = FakeBroker()
+    order: list[str] = []
+    backend = FakeBackend(order)
+
+    def runner(spec):
+        order.append("run")
+        return FakeHandle(0)
+
+    rc = cli.run_single(
+        _config(tmp_path, spec=MYTELCO),
+        acquire=broker.acquire, release=broker.release, runner=runner, backend=backend,
+    )
+    assert rc == 0
+    # started once with the target's parsed :8090 backend spec, and torn down after the run
+    assert backend.spec is not None and backend.spec.port == 8090
+    assert backend.stops == 1
+    assert order == ["start", "run", "stop"]
+    assert broker.released == ["emulator-5554"]
+
+
+def test_run_single_stops_backend_even_when_the_run_raises(tmp_path):
+    broker = FakeBroker()
+    order: list[str] = []
+    backend = FakeBackend(order)
+
+    def boom(spec):
+        raise RuntimeError("launch boom")
+
+    with pytest.raises(RuntimeError):
+        cli.run_single(
+            _config(tmp_path, spec=MYTELCO),
+            acquire=broker.acquire, release=broker.release, runner=boom, backend=backend,
+        )
+    # the finally still tore the backend down AND released the device
+    assert backend.stops == 1
+    assert broker.released == ["emulator-5554"]
