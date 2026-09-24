@@ -7,7 +7,7 @@ work. Do this before the model sweep runs.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** code-merged (device-validation pending) — criteria 1,3,4 done + merged; criterion 2 (live non-Claude run metadata read) deferred to orchestrator Phase B
+**Status:** done — all criteria met; criterion 2 (live non-Claude served-model metadata read) CONFIRMED in Phase B: the dbs_solution run stamped `served_model = openai-api/litellm/bedrock-claude-opus-4.8` into eval + sample metadata, matching eval.model and model_usage
 
 Context: `.scratch/env-hardening/report.md` §S3b — a real transcript self-labels "Sonnet 4.5" while
 the billed model was Opus 4.8. The Inspect log header already records the served model correctly; the
